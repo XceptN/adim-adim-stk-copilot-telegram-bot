@@ -135,7 +135,7 @@ def lambda_handler(event, context):
             user_name = message['from'].get('first_name', 'there')
             welcome_text = (
                 f"Merhaba {user_name}! 👋\n\n"
-                "Ben Adım Adım STK yardımcınızım. Bana metin mesajları veya resim gönderebilirsiniz."
+                "Ben Adım Adım STK yardımcınızım. Bana metin mesajları veya resim gönderebilirsiniz.\n\n"
                 "Size nasıl yardımcı olabilirim?"
             )
             send_telegram_message(chat_id, welcome_text)
