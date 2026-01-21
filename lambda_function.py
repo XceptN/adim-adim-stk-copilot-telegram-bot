@@ -491,7 +491,7 @@ def lambda_handler(event, context):
 
     except Exception as ex:
         print(f"[ERROR] flow ex={ex}")
-        tg_send_message(chat_id, "Bir hata oluştu. Lütfen tekrar deneyiniz.")
+        tg_send_message(chat_id, f"Bir hata oluştu ({ex}). Lütfen tekrar deneyiniz.")
 
     dt = time.time() - t0
     print(f"[DONE] total_ms={int(dt*1000)}")
