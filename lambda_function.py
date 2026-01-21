@@ -17,6 +17,7 @@ REQUIRE_TG_SECRET  = os.environ.get("REQUIRE_TG_SECRET", "false").lower() == "tr
 TELEGRAM_SECRET_TOKEN = os.environ.get("TELEGRAM_SECRET_TOKEN", "")
 DIRECTLINE_SECRET  = os.environ["DIRECTLINE_SECRET"]
 DIRECTLINE_BASE_URL = os.environ.get("DIRECTLINE_BASE_URL", "https://directline.botframework.com")
+DEFAULT_PROMPT = os.environ.get("DEFAULT_PROMPT", "Buradaki problemi nasıl çözebilirim?")
 
 # ---- Tuning knobs for polling patience ----
 DL_MAX_WAIT_SECONDS = float(os.environ.get("DL_MAX_WAIT_SECONDS", "30"))          # toplam bekleme penceresi
@@ -207,12 +208,12 @@ def dl_post_text(token, conversation_id_unused, text, user_id):
     print("[DL] post text ok")
     return conv_id
 
-def dl_upload_image(token, conversation_id_unused, filename, content_type, content_bytes, user_id):
+def dl_upload_image(token, conversation_id_unused, filename, content_type, content_bytes, user_id, text):
     """
     Her zaman yeni konuşma açar ve /upload kullanır; başarısız olursa data URL fallback.
     """
     headers = {"Authorization": f"Bearer {token}"}
-
+    
     # 1) Konuşmayı AÇ
     print("[DL] start conversation (always) for upload")
     b_start, c_start, _ = http_post_json(f"{DIRECTLINE_BASE_URL}/v3/directline/conversations", {}, headers)
@@ -221,7 +222,7 @@ def dl_upload_image(token, conversation_id_unused, filename, content_type, conte
         raise RuntimeError(f"Start conversation failed: {c_start} {b_start}")
     conv_id = json.loads(b_start.decode())["conversationId"]
     print(f"[DL] conversation started id={conv_id} (for upload)")
-
+    
     # 2) Upload denemesi
     activity = {
         "type": "message",
@@ -231,18 +232,34 @@ def dl_upload_image(token, conversation_id_unused, filename, content_type, conte
             "name": filename
         }]
     }
+    
     fields = {"activity": (json.dumps(activity), "application/vnd.microsoft.activity+json")}
     files  = [{"name":"file","filename":filename,"content":content_bytes,
                "content_type":content_type or "application/octet-stream"}]
-
-
     upload_url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/upload?userId={urllib.parse.quote(user_id)}"
     print(f"[DL] upload image conv={conv_id} url={repr(upload_url)} file={filename} ctype={content_type} bytes={len(content_bytes)}")
     b_up, c_up, _ = http_post_multipart(upload_url, fields, files, headers=headers, timeout=90)
+    
     if c_up in (200, 201):
         print("[DL] upload ok")
+        
+        # *** YENİ: Upload başarılıysa text'i ayrı mesaj olarak gönder ***
+        if text:
+            print(f"[DL] sending text message after upload text_len={len(text)}")
+            text_activity = {
+                "type": "message",
+                "from": {"id": user_id},
+                "text": text
+            }
+            activities_url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/activities"
+            b_txt, c_txt, _ = http_post_json(activities_url, text_activity, headers)
+            if c_txt in (200, 201):
+                print("[DL] text message sent ok")
+            else:
+                print(f"[DL][WARN] text message failed status={c_txt}")
+        
         return conv_id
-
+    
     # 3) Fallback: data URL
     print(f"[DL][WARN] upload failed status={c_up}; fallback to data URL")
     data_url = f"data:{content_type};base64,{base64.b64encode(content_bytes).decode()}"
@@ -255,6 +272,9 @@ def dl_upload_image(token, conversation_id_unused, filename, content_type, conte
             "name": filename
         }]
     }
+    if text:
+        act_fb["text"] = text
+    
     url_fb = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/activities"
     print(f"[DL] fallback post (data URL) conv={conv_id} url={repr(url_fb)}")
     b_fb, c_fb, _ = http_post_json(url_fb, act_fb, headers)
@@ -375,16 +395,46 @@ def lambda_handler(event, context):
     if not chat_id:
         print("[INVOKE] no chat -> 200")
         return {"statusCode": 200, "body": "no chat"}
+    
+    uid = str(message['from']['id'])
+    # Handle /start command
+    if 'text' in message and message['text'].startswith('/start'):
+        user_name = message['from'].get('first_name', 'there')
+        welcome_text = (
+            f"Merhaba {user_name}! 👋\n\n"
+            "Ben Adım Adım STK yardımcınızım. Bana metin mesajları veya resim gönderebilirsiniz.\n\n"
+            "Size nasıl yardımcı olabilirim?"
+        )
+        tg_send_message(chat_id, welcome_text)
+            
+        return {
+            'statusCode': 200,
+            'body': json.dumps({'status': 'ok'})
+        }    
+
+    caption = message.get("caption")
+    text = message.get("text")
+
+    # Eğer ne text ne caption varsa, varsayılan prompt kullan
+    if not caption and not text:
+        caption = DEFAULT_PROMPT
+        print(f"[FLOW] no caption/text -> using default prompt text_len={len(caption)}")
+    else:
+        if caption:
+            print(f"[FLOW] caption detected text_len={len(caption)}")
+        if text:
+            print(f"[FLOW] text detected len={len(text)}")
 
     try:
         # 1) Token generate (SECRET -> TOKEN)
         token, conv_id = dl_get_token_and_conversation_via_secret()
 
-        # 2) Metin mesajı
-        text = message.get("text")
-        if text:
-            print(f"[FLOW] text detected len={len(text)}")
-            conv_id = dl_post_text(token, conv_id, text, user_id)
+        # 2) Metin mesajı (text veya caption varsa)
+        message_to_send = text or caption  # text öncelikli, yoksa caption
+        if message_to_send and message_to_send != DEFAULT_PROMPT:
+            # DEFAULT_PROMPT değilse metin olarak gönder
+            print(f"[FLOW] sending text message len={len(message_to_send)}")
+            conv_id = dl_post_text(token, conv_id, message_to_send, user_id)
 
         # 3) Görsel
         photo_sizes = message.get("photo") or []
@@ -399,10 +449,11 @@ def lambda_handler(event, context):
             if not content_type:
                 content_type = mimetypes.guess_type(file_path)[0] or "image/jpeg"
             filename = os.path.basename(file_path) or f"photo_{int(time.time())}.jpg"
-            conv_id = dl_upload_image(token, conv_id, filename, content_type, img_bytes, user_id)
+            # Görsel varsa caption kullan (yoksa DEFAULT_PROMPT)
+            conv_id = dl_upload_image(token, conv_id, filename, content_type, img_bytes, user_id, caption or DEFAULT_PROMPT)
             sent_image = True
 
-        elif doc and isinstance(doc, dict):
+        elif doc and isinstance(doc, dict) and str(doc.get("mime_type","")).startswith("image/"):
             mime = doc.get("mime_type", "")
             print(f"[FLOW] document detected mime={mime}")
             if mime.startswith("image/"):
@@ -412,11 +463,11 @@ def lambda_handler(event, context):
                 if not content_type:
                     content_type = mimetypes.guess_type(file_path)[0] or "image/jpeg"
                 filename = os.path.basename(file_path) or f"image_{int(time.time())}"
-                conv_id = dl_upload_image(token, conv_id, filename, content_type, img_bytes, user_id)
+                conv_id = dl_upload_image(token, conv_id, filename, content_type, img_bytes, user_id, caption)
                 sent_image = True
 
         # 4) Bot yanıtlarını topla
-        replies = dl_poll_reply_text_and_attachments(token, conv_id, max_wait_seconds=14)
+        replies = dl_poll_reply_text_and_attachments(token, conv_id, max_wait_seconds=30)
         if not replies:
             msg = "Güncel yanıt bulunamadı, lütfen tekrar deneyin." if not sent_image else \
                   "Görsel alındı, yanıt hazırlanıyor."
