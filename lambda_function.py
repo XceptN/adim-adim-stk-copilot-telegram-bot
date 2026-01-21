@@ -151,8 +151,8 @@ def lambda_handler(event, context):
             logger.info(f"Processing text message from {user_id}: {message_text}")
             
             # Send to Copilot
-            #copilot_response = send_to_copilot(user_id, message_text=message_text)
-            copilot_response = "<Metin formatinda mesaja YZ ajaninin vereceg yanit.>"  # Placeholder for testing
+            copilot_response = send_to_copilot(user_id, message_text=message_text)
+            #copilot_response = "<Metin formatinda mesaja YZ ajaninin vereceg yanit.>"  # Placeholder for testing
 
             # Send response back
             send_telegram_message(chat_id, copilot_response)
@@ -171,12 +171,12 @@ def lambda_handler(event, context):
             
             if image_data:
                 # Send to Copilot
-                #copilot_response = send_to_copilot(
-                #    user_id,
-                #    message_text=caption,
-                #    image_data=image_data
-                #)
-                copilot_response = "<Resim formatinda mesaja YZ ajaninin verecegi yanit.>"  # Placeholder for testing
+                copilot_response = send_to_copilot(
+                    user_id,
+                    message_text=caption,
+                    image_data=image_data
+                )
+                #copilot_response = "<Resim formatinda mesaja YZ ajaninin verecegi yanit.>"  # Placeholder for testing
                 
                 # Send response back
                 send_telegram_message(chat_id, copilot_response)
@@ -198,12 +198,12 @@ def lambda_handler(event, context):
                 image_data = download_telegram_file(file_id)
                 
                 if image_data:
-                    #copilot_response = send_to_copilot(
-                    #    user_id,
-                    #    message_text=caption,
-                    #    image_data=image_data
-                    #)
-                    copilot_response = "<Resim dosyasi formatinda mesaja YZ ajaninin verecegi yanit.>"  # Placeholder for testing
+                    copilot_response = send_to_copilot(
+                        user_id,
+                        message_text=caption,
+                        image_data=image_data
+                    )
+                    #copilot_response = "<Resim dosyasi formatinda mesaja YZ ajaninin verecegi yanit.>"  # Placeholder for testing
 
                     send_telegram_message(chat_id, copilot_response)
                 else:
