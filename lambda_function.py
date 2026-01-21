@@ -7,7 +7,9 @@ import os
 import time
 import urllib.request
 import urllib.parse
+import urllib.error
 import uuid
+import random
 from datetime import datetime
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
@@ -15,6 +17,12 @@ REQUIRE_TG_SECRET  = os.environ.get("REQUIRE_TG_SECRET", "false").lower() == "tr
 TELEGRAM_SECRET_TOKEN = os.environ.get("TELEGRAM_SECRET_TOKEN", "")
 DIRECTLINE_SECRET  = os.environ["DIRECTLINE_SECRET"]
 DIRECTLINE_BASE_URL = os.environ.get("DIRECTLINE_BASE_URL", "https://directline.botframework.com")
+
+# ---- Tuning knobs for polling patience ----
+DL_MAX_WAIT_SECONDS = float(os.environ.get("DL_MAX_WAIT_SECONDS", "30"))          # toplam bekleme penceresi
+DL_INITIAL_POLL_INTERVAL = float(os.environ.get("DL_INITIAL_POLL_INTERVAL", "0.6"))  # ilk aralık (sn)
+DL_BACKOFF_FACTOR = float(os.environ.get("DL_BACKOFF_FACTOR", "1.5"))            # çarpan
+DL_MAX_POLL_INTERVAL = float(os.environ.get("DL_MAX_POLL_INTERVAL", "3.0"))      # en fazla aralık (sn)
 
 # -------- Helpers: HTTP --------
 def http_get(url, headers=None, timeout=15):
@@ -71,11 +79,19 @@ def http_post_multipart(url, fields, files, headers=None, timeout=90):
         h.update(headers)
 
     print(f"[HTTP][POST-MP] headers={_redact_headers(h)} total_bytes={len(data)}")
-    req = urllib.request.Request(url, data=data, headers=h, method="POST")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        rdata = resp.read()
-        print(f"[HTTP][POST-MP][{url}] status={resp.status} len={len(rdata)}")
-        return rdata, resp.getcode(), dict(resp.headers)
+
+    try:
+        req = urllib.request.Request(url, data=data, headers=h, method="POST")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            rdata = resp.read()
+            print(f"[HTTP][POST-MP][{url}] status={resp.status} len={len(rdata)}")
+            return rdata, resp.getcode(), dict(resp.headers)
+    except urllib.error.HTTPError as e:
+        err_body = e.read()
+        print(f"[HTTP][POST-MP][ERR] status={e.code} body={err_body}")
+        # Aynı interface'i koruyalım:
+        return err_body, e.code, dict(e.headers or {})
+
 
 def _redact_headers(h):
     if not h: return {}
@@ -161,8 +177,6 @@ def dl_start_conversation_if_needed(token, conversation_id):
     print(f"[DL] conversation started id={conversation_id}")
     return conversation_id
 
-
-
 def dl_post_text(token, conversation_id_unused, text, user_id):
     """
     Her zaman yeni konuşma açar; tokens/generate'dan gelen conv_id'yi kullanmaz.
@@ -193,9 +207,6 @@ def dl_post_text(token, conversation_id_unused, text, user_id):
     print("[DL] post text ok")
     return conv_id
 
-
-
-
 def dl_upload_image(token, conversation_id_unused, filename, content_type, content_bytes, user_id):
     """
     Her zaman yeni konuşma açar ve /upload kullanır; başarısız olursa data URL fallback.
@@ -216,7 +227,7 @@ def dl_upload_image(token, conversation_id_unused, filename, content_type, conte
         "type": "message",
         "from": {"id": user_id},
         "attachments": [{
-            "contentType": content_type or "application/octet-stream",
+            "contentType": content_type,
             "name": filename
         }]
     }
@@ -224,7 +235,8 @@ def dl_upload_image(token, conversation_id_unused, filename, content_type, conte
     files  = [{"name":"file","filename":filename,"content":content_bytes,
                "content_type":content_type or "application/octet-stream"}]
 
-    upload_url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/upload"
+
+    upload_url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/upload?userId={urllib.parse.quote(user_id)}"
     print(f"[DL] upload image conv={conv_id} url={repr(upload_url)} file={filename} ctype={content_type} bytes={len(content_bytes)}")
     b_up, c_up, _ = http_post_multipart(upload_url, fields, files, headers=headers, timeout=90)
     if c_up in (200, 201):
@@ -252,34 +264,71 @@ def dl_upload_image(token, conversation_id_unused, filename, content_type, conte
     print("[DL] fallback (data URL) ok")
     return conv_id
 
-def dl_poll_reply_text_and_attachments(token, conversation_id, max_wait_seconds=14, poll_interval=1.0, user_id_prefix="tg-"):
+def dl_poll_reply_text_and_attachments(token, conversation_id,
+                                       max_wait_seconds=None,
+                                       initial_interval=None,
+                                       backoff_factor=None,
+                                       max_interval=None,
+                                       user_id_prefix="tg-"):
+    """
+    Adaptif (artırımlı) polling:
+      - hızlı ilk denemeler
+      - kademeli artan bekleme (exponential backoff) + küçük jitter
+      - DL_MAX_WAIT_SECONDS penceresi boyunca bekler
+    """
     headers = {"Authorization": f"Bearer {token}"}
     url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conversation_id}/activities"
+
+    # Varsayılanları ortamdan çek
+    max_wait_seconds = float(max_wait_seconds or DL_MAX_WAIT_SECONDS)
+    interval = float(initial_interval or DL_INITIAL_POLL_INTERVAL)
+    factor = float(backoff_factor or DL_BACKOFF_FACTOR)
+    max_interval = float(max_interval or DL_MAX_POLL_INTERVAL)
+
     deadline = time.time() + max_wait_seconds
     watermark = None
     replies = []
-    print(f"[DL] poll replies conv={conversation_id} timeout={max_wait_seconds}s")
+    attempt = 0
+
+    print(f"[DL] poll replies (adaptive) conv={conversation_id} "
+          f"max_wait={max_wait_seconds}s start_interval={interval}s backoff={factor} max_interval={max_interval}s")
+
     while time.time() < deadline:
+        attempt += 1
         q = f"?watermark={urllib.parse.quote(watermark)}" if watermark else ""
         body, code, _ = http_get(url + q, headers, timeout=20)
         if code != 200:
-            print(f"[DL] poll http status={code} stop")
+            print(f"[DL] poll http status={code} (attempt={attempt}) -> stop polling")
             break
+
         obj = json.loads(body.decode())
         watermark = obj.get("watermark")
         activities = obj.get("activities", [])
-        print(f"[DL] poll got activities={len(activities)} watermark={watermark}")
+        print(f"[DL] poll got activities={len(activities)} watermark={watermark} attempt={attempt}")
+
         for act in activities:
             if act.get("type") == "message" and not act.get("from", {}).get("id", "").startswith(user_id_prefix):
                 text = act.get("text")
                 atts = act.get("attachments") or []
                 print(f"[DL] bot message text_len={len(text or '')} attachments={len(atts)}")
                 replies.append({"text": text, "attachments": atts})
+
         if replies:
-            print(f"[DL] poll done replies={len(replies)}")
+            print(f"[DL] poll done replies={len(replies)} in_attempts={attempt}")
             return replies
-        time.sleep(poll_interval)
-    print("[DL] poll timeout/no replies")
+
+        # Adaptif bekleme + jitter
+        jitter = random.uniform(-0.1, 0.1)  # +/- 100 ms
+        sleep_for = max(0.1, min(max_interval, interval + jitter))
+        now_left = max(0, deadline - time.time())
+        sleep_for = min(sleep_for, now_left)
+        print(f"[DL] no reply yet; sleeping {sleep_for:.2f}s (attempt={attempt})")
+        time.sleep(sleep_for)
+
+        # bir sonraki döngüde aralığı büyüt
+        interval = min(max_interval, interval * factor)
+
+    print("[DL] poll timeout/no replies (adaptive)")
     return replies
 
 # -------- Security: optional secret_token check --------
@@ -361,7 +410,7 @@ def lambda_handler(event, context):
                 download_url, file_path = tg_get_file(file_id)
                 img_bytes, content_type = tg_download_file(download_url)
                 if not content_type:
-                    content_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+                    content_type = mimetypes.guess_type(file_path)[0] or "image/jpeg"
                 filename = os.path.basename(file_path) or f"image_{int(time.time())}"
                 conv_id = dl_upload_image(token, conv_id, filename, content_type, img_bytes, user_id)
                 sent_image = True
