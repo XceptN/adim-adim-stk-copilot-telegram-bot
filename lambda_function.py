@@ -1,5 +1,5 @@
 # lambda_function.py  -- verbose logging (print) enabled
-# v6: Text ve görsel AYNI activity'de birlikte gönderilir
+# v7: Multipart upload yerine INLINE BASE64 DATA URL kullanır
 import base64
 import json
 import mimetypes
@@ -52,76 +52,6 @@ def http_post_json(url, payload, headers=None, timeout=20):
         data = resp.read()
         print(f"[HTTP][POST-JSON][{url}] status={resp.status} len={len(data)}")
         return data, resp.getcode(), dict(resp.headers)
-
-def http_post_multipart(url, fields, files, headers=None, timeout=90):
-    """
-    Direct Line için multipart POST.
-    Sıralama: önce fields (activity), sonra files (görsel).
-    """
-    boundary = "----WebKitFormBoundary{}".format(uuid.uuid4().hex)
-    print(f"[HTTP][POST-MP] url={url} boundary={boundary} fields={list(fields.keys()) if fields else []} "
-          f"files={[f.get('filename') for f in (files or [])]}")
-    body_parts = []
-
-    def add_part(hdrs, content):
-        body_parts.append(("--" + boundary).encode())
-        for hk, hv in hdrs.items():
-            body_parts.append(f"{hk}: {hv}".encode())
-        body_parts.append(b"")
-        body_parts.append(content if isinstance(content, (bytes, bytearray)) else content.encode("utf-8"))
-
-    # 1) Önce fields (activity JSON)
-    for name, (content, ctype) in (fields or {}).items():
-        if name == "activity":
-            add_part({
-                "Content-Disposition": f'form-data; name="{name}"',  
-                "Content-Type": "application/json; charset=utf-8",
-            }, content)
-        else:
-            add_part({
-                "Content-Disposition": f'form-data; name="{name}"',
-                "Content-Type": ctype or "text/plain; charset=utf-8",
-            }, content)
-
-    # 2) Sonra files (görsel)
-    for f in (files or []):
-        file_content_type = f.get("content_type")
-        if not file_content_type or file_content_type == "application/octet-stream":
-            guessed = mimetypes.guess_type(f.get("filename", ""))[0]
-            file_content_type = guessed or "image/jpeg"
-        
-        print(f"[HTTP][POST-MP] Adding file: {f.get('filename')} with Content-Type: {file_content_type}")
-        
-        add_part({
-            "Content-Disposition": f'form-data; name="{f["name"]}"; filename="{f["filename"]}"',
-            "Content-Type": file_content_type,
-        }, f["content"])
-
-    body_parts.append(("--" + boundary + "--").encode())
-    data = b"\r\n".join(body_parts)
-
-    h = {"Content-Type": f"multipart/form-data; boundary={boundary}",
-         "Content-Length": str(len(data))}
-    if headers:
-        h.update(headers)
-
-    print(f"[HTTP][POST-MP] headers={_redact_headers(h)} total_bytes={len(data)}")
-    
-    # Debug: İlk 1000 byte'ı göster
-    debug_str = data[:1000].decode('utf-8', errors='replace')
-    print(f"[HTTP][POST-MP] body_preview:\n{debug_str}")
-
-    try:
-        req = urllib.request.Request(url, data=data, headers=h, method="POST")
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            rdata = resp.read()
-            print(f"[HTTP][POST-MP][{url}] status={resp.status} len={len(rdata)}")
-            return rdata, resp.getcode(), dict(resp.headers)
-    except urllib.error.HTTPError as e:
-        err_body = e.read()
-        print(f"[HTTP][POST-MP][ERR] status={e.code} body={err_body}")
-        return err_body, e.code, dict(e.headers or {})
-
 
 def _redact_headers(h):
     if not h: return {}
@@ -191,19 +121,6 @@ def dl_get_token_and_conversation_via_secret():
         raise RuntimeError("No token returned from Direct Line")
     return token, conv_id
 
-def dl_start_conversation_if_needed(token, conversation_id):
-    headers = {"Authorization": f"Bearer {token}"}
-    if conversation_id:
-        print(f"[DL] reuse existing conversation_id={conversation_id}")
-        return conversation_id
-    print("[DL] start conversation")
-    body, code, _ = http_post_json(f"{DIRECTLINE_BASE_URL}/v3/directline/conversations", {}, headers)
-    if code not in (200, 201):
-        raise RuntimeError(f"Start conversation failed: {code} {body}")
-    conversation_id = json.loads(body.decode())["conversationId"]
-    print(f"[DL] conversation started id={conversation_id}")
-    return conversation_id
-
 def dl_post_text(token, conversation_id_unused, text, user_id):
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -230,70 +147,71 @@ def dl_post_text(token, conversation_id_unused, text, user_id):
 
 def dl_upload_image(token, conversation_id_unused, filename, content_type, content_bytes, user_id, text):
     """
-    Görsel + Text AYNI MESAJDA gönderilir.
-    Activity JSON içinde text var, multipart'ta görsel var.
+    INLINE BASE64 DATA URL yaklaşımı.
+    Multipart upload sorunlu olduğu için, görseli base64 olarak activity içinde gönderiyoruz.
     """
     headers = {"Authorization": f"Bearer {token}"}
     
     # 1) Konuşmayı AÇ
-    print("[DL] start conversation (always) for upload")
+    print("[DL] start conversation (always) for image")
     b_start, c_start, _ = http_post_json(f"{DIRECTLINE_BASE_URL}/v3/directline/conversations", {}, headers)
     if c_start not in (200, 201):
         print(f"[DL][ERR] start conversation failed status={c_start} body={b_start}")
         raise RuntimeError(f"Start conversation failed: {c_start} {b_start}")
     conv_id = json.loads(b_start.decode())["conversationId"]
-    print(f"[DL] conversation started id={conv_id} (for upload)")
+    print(f"[DL] conversation started id={conv_id}")
     
-    # 2) Text'i temizle - fazladan tırnak varsa kaldır
+    # 2) Text'i temizle
     if not text or text.strip() == "":
         text = DEFAULT_PROMPT
-    
-    # Başındaki ve sonundaki tırnak işaretlerini kaldır
     text = text.strip()
     if text.startswith('"') and text.endswith('"'):
         text = text[1:-1]
     if text.startswith("'") and text.endswith("'"):
         text = text[1:-1]
     
-    print(f"[DL] Message Text (cleaned): {text}")
+    print(f"[DL] Text: {text}")
     print(f"[DL] Image: filename={filename}, content_type={content_type}, size={len(content_bytes)} bytes")
-
-    # 3) Activity JSON - TEXT BURADA, görsel multipart'ta
-    activity = {
-        "type": "message",
-        "from": {"id": user_id},
-        "text": text
-    }
-    activity_json = json.dumps(activity, ensure_ascii=False)
-    print(f"[DL] Activity JSON: {activity_json}")
-
-    # 4) Multipart hazırla
-    fields = {
-        "activity": (activity_json, "application/json; charset=utf-8")
-    }
     
+    # 3) Content-Type kontrolü
     if not content_type or content_type == "application/octet-stream":
         guessed = mimetypes.guess_type(filename)[0]
         content_type = guessed or "image/jpeg"
         print(f"[DL] Adjusted content_type to: {content_type}")
     
-    files = [{
-        "name": "file",
-        "filename": filename,
-        "content": content_bytes,
-        "content_type": content_type
-    }]
-
-    # 5) Upload - TEXT + GÖRSEL BİRLİKTE
-    upload_url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/upload?userId={urllib.parse.quote(user_id)}"
-    print(f"[DL] upload URL: {upload_url}")
+    # 4) Base64 encode
+    b64_data = base64.b64encode(content_bytes).decode('ascii')
+    data_url = f"data:{content_type};base64,{b64_data}"
     
-    b_up, c_up, h_up = http_post_multipart(upload_url, fields, files, headers=headers, timeout=90)
-
-    if c_up in (200, 201):
-        print(f"[DL] upload SUCCESS! status={c_up}")
+    print(f"[DL] Base64 data URL created, length: {len(data_url)} chars")
+    
+    # 5) Activity with inline attachment
+    activity = {
+        "type": "message",
+        "from": {"id": user_id},
+        "text": text,
+        "attachments": [
+            {
+                "contentType": content_type,
+                "contentUrl": data_url,
+                "name": filename
+            }
+        ]
+    }
+    
+    print(f"[DL] Activity: type=message, text='{text[:50]}...', attachments=1")
+    
+    # 6) POST to activities endpoint (NOT upload endpoint)
+    activities_url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/activities"
+    print(f"[DL] POST to: {activities_url}")
+    
+    # Timeout'u artır çünkü büyük payload
+    b_post, c_post, _ = http_post_json(activities_url, activity, headers, timeout=60)
+    
+    if c_post in (200, 201):
+        print(f"[DL] Activity POST SUCCESS! status={c_post}")
         
-        # Doğrulama - activity'nin nasıl kaydedildiğini kontrol et
+        # Doğrulama
         time.sleep(0.5)
         b_act, c_act, _ = http_get_json(
             f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/activities",
@@ -304,37 +222,38 @@ def dl_upload_image(token, conversation_id_unused, filename, content_type, conte
         print(f"[DL] Total activities: {len(acts.get('activities', []))}")
         
         if acts.get("activities"):
-            # Kullanıcının gönderdiği mesajı bul
             user_acts = [a for a in acts["activities"] if a.get("from", {}).get("id", "").startswith("tg-")]
             
             if user_acts:
                 last_user = user_acts[-1]
                 print(f"[DL] === USER MESSAGE AS RECEIVED BY BOT ===")
                 print(f"[DL] text: '{last_user.get('text', '')}'")
-                print(f"[DL] attachments: {last_user.get('attachments')}")
                 
                 atts = last_user.get("attachments") or []
+                print(f"[DL] attachments count: {len(atts)}")
+                
                 if atts:
                     att = atts[0]
                     ct = att.get('contentType', '')
                     curl = att.get('contentUrl', '')
                     print(f"[DL] ✓ attachment contentType: {ct}")
-                    print(f"[DL] ✓ attachment contentUrl: {curl[:100] if curl else 'N/A'}...")
+                    # Data URL çok uzun, sadece başını göster
+                    if curl.startswith('data:'):
+                        print(f"[DL] ✓ attachment contentUrl: data:{ct};base64,... (length: {len(curl)})")
+                    else:
+                        print(f"[DL] ✓ attachment contentUrl: {curl[:100]}...")
                     
-                    # Sorun tespiti
-                    if ct == "application/octet-stream":
-                        print("[DL] ⚠️ PROBLEM: contentType is octet-stream, not image!")
                     if "bot-framework-default-placeholder" in curl:
                         print("[DL] ⚠️ PROBLEM: Still getting placeholder URL!")
                     if not last_user.get('text'):
-                        print("[DL] ⚠️ PROBLEM: Text is empty in the received activity!")
+                        print("[DL] ⚠️ PROBLEM: Text is empty!")
                 else:
-                    print("[DL] ⚠️ PROBLEM: No attachments in user activity!")
+                    print("[DL] ⚠️ PROBLEM: No attachments!")
         
         return conv_id
     
-    print(f"[DL][ERR] upload failed status={c_up} body={b_up}")
-    raise RuntimeError(f"Upload failed: {c_up} {b_up}")
+    print(f"[DL][ERR] Activity POST failed status={c_post} body={b_post}")
+    raise RuntimeError(f"Activity POST failed: {c_post} {b_post}")
 
 def dl_poll_reply_text_and_attachments(token, conversation_id,
                                        max_wait_seconds=None,
@@ -487,7 +406,7 @@ def lambda_handler(event, context):
                 print(f"[FLOW] No image, sending text only: len={len(message_to_send)}")
                 conv_id = dl_post_text(token, conv_id, message_to_send, user_id)
         
-        # Eğer görsel VARSA, text + görsel birlikte gönder
+        # Eğer görsel VARSA, text + görsel birlikte gönder (inline base64)
         sent_image = False
 
         if photo_sizes:
@@ -499,7 +418,6 @@ def lambda_handler(event, context):
                 content_type = mimetypes.guess_type(file_path)[0] or "image/jpeg"
             filename = os.path.basename(file_path) or f"photo_{int(time.time())}.jpg"
             
-            # TEXT + GÖRSEL BİRLİKTE
             instruction = caption or DEFAULT_PROMPT
             print(f"[FLOW] Sending image WITH instruction: '{instruction}'")
             conv_id = dl_upload_image(token, conv_id, filename, content_type, img_bytes, user_id, instruction)
