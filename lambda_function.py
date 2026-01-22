@@ -1,5 +1,5 @@
 # lambda_function.py  -- verbose logging (print) enabled
-# v8: Copilot Studio'nun beklediği EXACT format
+# v9: Added group @mention support with privacy mode ON
 import base64
 import json
 import mimetypes
@@ -19,6 +19,10 @@ TELEGRAM_SECRET_TOKEN = os.environ.get("TELEGRAM_SECRET_TOKEN", "")
 DIRECTLINE_SECRET  = os.environ["DIRECTLINE_SECRET"]
 DIRECTLINE_BASE_URL = os.environ.get("DIRECTLINE_BASE_URL", "https://directline.botframework.com")
 DEFAULT_PROMPT = os.environ.get("DEFAULT_PROMPT", "Bu ekran görüntüsündeki problemi nasıl çözebilirim?")
+
+# Bot username (without @) - needed for group mention detection
+# Set this in Lambda environment variables, e.g., "AdimAdimSTKBot"
+TELEGRAM_BOT_USERNAME = os.environ.get("TELEGRAM_BOT_USERNAME", "")
 
 # ---- Tuning knobs for polling patience ----
 DL_MAX_WAIT_SECONDS = float(os.environ.get("DL_MAX_WAIT_SECONDS", "30"))
@@ -121,20 +125,24 @@ def _redact_headers(h):
     return redacted
 
 # -------- Helpers: Telegram --------
-def tg_send_message(chat_id, text):
+def tg_send_message(chat_id, text, reply_to_message_id=None):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": chat_id, "text": text}
-    print(f"[TG] sendMessage chat_id={chat_id} text_len={len(text)}")
+    if reply_to_message_id:
+        payload["reply_to_message_id"] = reply_to_message_id
+    print(f"[TG] sendMessage chat_id={chat_id} text_len={len(text)} reply_to={reply_to_message_id}")
     _, code, _ = http_post_json(url, payload)
     print(f"[TG] sendMessage status={code}")
     return code == 200
 
-def tg_send_photo_by_url(chat_id, url_or_fileid, caption=None):
+def tg_send_photo_by_url(chat_id, url_or_fileid, caption=None, reply_to_message_id=None):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
     payload = {"chat_id": chat_id, "photo": url_or_fileid}
     if caption:
         payload["caption"] = caption
-    print(f"[TG] sendPhoto chat_id={chat_id} source={'url/fileid'} caption_len={len(caption or '')}")
+    if reply_to_message_id:
+        payload["reply_to_message_id"] = reply_to_message_id
+    print(f"[TG] sendPhoto chat_id={chat_id} source={'url/fileid'} caption_len={len(caption or '')} reply_to={reply_to_message_id}")
     _, code, _ = http_post_json(url, payload)
     print(f"[TG] sendPhoto status={code}")
     return code == 200
@@ -161,6 +169,147 @@ def tg_download_file(download_url):
     content_type = headers.get("Content-Type")
     print(f"[TG] download ok bytes={len(body)} content_type={content_type}")
     return body, content_type
+
+# -------- Helpers: Group Message Detection --------
+def is_group_chat(chat):
+    """Check if the chat is a group or supergroup"""
+    chat_type = chat.get("type", "")
+    return chat_type in ("group", "supergroup")
+
+def is_bot_mentioned(message, bot_username):
+    """
+    Check if the bot is mentioned in the message using @username.
+    Returns (is_mentioned, cleaned_text) tuple.
+    
+    With Group Privacy ON, Telegram only forwards messages to the bot if:
+    1. It's a /command
+    2. The bot is @mentioned
+    3. It's a reply to the bot's message
+    
+    This function detects @mentions and strips them from the text.
+    """
+    if not bot_username:
+        print("[GROUP] Warning: TELEGRAM_BOT_USERNAME not set, cannot detect @mentions")
+        return False, message.get("text", "")
+    
+    text = message.get("text", "") or message.get("caption", "") or ""
+    entities = message.get("entities", []) or message.get("caption_entities", [])
+    
+    print(f"[GROUP] Checking for @mention of @{bot_username}")
+    print(f"[GROUP] Text: '{text}'")
+    print(f"[GROUP] Entities: {entities}")
+    
+    # Check for mention entities
+    is_mentioned = False
+    mention_positions = []  # Track positions to remove from text
+    
+    for entity in entities:
+        if entity.get("type") == "mention":
+            # Extract the mentioned username from text
+            offset = entity.get("offset", 0)
+            length = entity.get("length", 0)
+            mentioned = text[offset:offset + length]
+            print(f"[GROUP] Found mention entity: '{mentioned}'")
+            
+            # Check if it's our bot (case-insensitive)
+            if mentioned.lower() == f"@{bot_username.lower()}":
+                is_mentioned = True
+                mention_positions.append((offset, length))
+                print(f"[GROUP] ✓ Bot @mention detected!")
+        
+        elif entity.get("type") == "bot_command":
+            # Commands like /start@botname also work
+            offset = entity.get("offset", 0)
+            length = entity.get("length", 0)
+            command = text[offset:offset + length]
+            if f"@{bot_username.lower()}" in command.lower():
+                is_mentioned = True
+                print(f"[GROUP] ✓ Bot command with @mention detected: {command}")
+    
+    # Clean the text by removing bot mentions
+    cleaned_text = text
+    # Sort positions in reverse order to avoid offset issues when removing
+    for offset, length in sorted(mention_positions, reverse=True):
+        cleaned_text = cleaned_text[:offset] + cleaned_text[offset + length:]
+    
+    # Clean up extra whitespace
+    cleaned_text = " ".join(cleaned_text.split()).strip()
+    
+    print(f"[GROUP] is_mentioned={is_mentioned}, cleaned_text='{cleaned_text}'")
+    return is_mentioned, cleaned_text
+
+def is_reply_to_bot(message, bot_username):
+    """Check if this message is a reply to a bot's message"""
+    reply_to = message.get("reply_to_message")
+    if not reply_to:
+        return False
+    
+    reply_from = reply_to.get("from", {})
+    # Check if the replied-to message was from the bot
+    reply_username = reply_from.get("username", "")
+    is_reply = reply_username.lower() == bot_username.lower() if bot_username else False
+    
+    print(f"[GROUP] Reply to message from: @{reply_username}, is_reply_to_bot={is_reply}")
+    return is_reply
+
+def should_respond_in_group(message, chat, bot_username):
+    """
+    Determine if the bot should respond to this group message.
+    
+    With Group Privacy ON, Telegram already filters messages, but we still receive:
+    1. /commands (with or without @botname)
+    2. @botname mentions
+    3. Replies to bot's messages
+    
+    Returns (should_respond, cleaned_text) tuple.
+    """
+    if not is_group_chat(chat):
+        # Not a group chat, always respond
+        return True, message.get("text", "") or message.get("caption", "")
+    
+    text = message.get("text", "") or message.get("caption", "") or ""
+    
+    print(f"[GROUP] Evaluating group message: '{text[:100]}...' " if len(text) > 100 else f"[GROUP] Evaluating group message: '{text}'")
+    
+    # Check 1: Is it a /command?
+    if text.startswith("/"):
+        print("[GROUP] ✓ Message is a command")
+        return True, text
+    
+    # Check 2: Is the bot @mentioned?
+    is_mentioned, cleaned_text = is_bot_mentioned(message, bot_username)
+    if is_mentioned:
+        print("[GROUP] ✓ Bot is @mentioned")
+        return True, cleaned_text
+    
+    # Check 3: Is it a reply to the bot?
+    if is_reply_to_bot(message, bot_username):
+        print("[GROUP] ✓ Message is a reply to bot")
+        return True, text
+    
+    # If we got here but received the message anyway, Telegram must have 
+    # determined we should see it (privacy mode behavior)
+    # This can happen with photos that have @mention in caption
+    print("[GROUP] Message received but no explicit trigger found - checking caption entities")
+    
+    # For photos/documents, check caption entities
+    caption_entities = message.get("caption_entities", [])
+    caption = message.get("caption", "")
+    if caption_entities and caption:
+        for entity in caption_entities:
+            if entity.get("type") == "mention":
+                offset = entity.get("offset", 0)
+                length = entity.get("length", 0)
+                mentioned = caption[offset:offset + length]
+                if mentioned.lower() == f"@{bot_username.lower()}":
+                    # Remove mention from caption
+                    cleaned_caption = caption[:offset] + caption[offset + length:]
+                    cleaned_caption = " ".join(cleaned_caption.split()).strip()
+                    print(f"[GROUP] ✓ Bot @mentioned in caption")
+                    return True, cleaned_caption
+    
+    print("[GROUP] ✗ No trigger found for group response")
+    return False, text
 
 # -------- Helpers: Direct Line --------
 def dl_get_token_and_conversation_via_secret():
@@ -432,23 +581,45 @@ def lambda_handler(event, context):
     
     chat = message.get("chat") or {}
     chat_id = chat.get("id")
+    chat_type = chat.get("type", "private")
+    message_id = message.get("message_id")  # For reply functionality
     user_id = f"tg-{chat_id}"
-    print(f"[CTX] chat_id={chat_id} user_id={user_id}")
+    
+    print(f"[CTX] chat_id={chat_id} chat_type={chat_type} message_id={message_id} user_id={user_id}")
 
     if not chat_id:
         print("[INVOKE] no chat -> 200")
         return {"statusCode": 200, "body": "no chat"}
     
-    uid = str(message['from']['id'])
+    # ========== GROUP MESSAGE HANDLING ==========
+    # Check if we should respond to this message (for groups)
+    should_respond, cleaned_text = should_respond_in_group(message, chat, TELEGRAM_BOT_USERNAME)
     
-    if 'text' in message and message['text'].startswith('/start'):
-        user_name = message['from'].get('first_name', 'there')
+    if not should_respond:
+        print(f"[GROUP] Skipping message - bot not addressed in group")
+        return {"statusCode": 200, "body": "not addressed"}
+    
+    # Use cleaned text (with @mention removed) for further processing
+    original_text = message.get("text")
+    if cleaned_text != original_text and cleaned_text:
+        print(f"[GROUP] Using cleaned text: '{cleaned_text}' (original: '{original_text}')")
+        message["text"] = cleaned_text
+    
+    # For group chats, we'll reply to the original message for context
+    reply_to_id = message_id if is_group_chat(chat) else None
+    
+    uid = str(message.get('from', {}).get('id', ''))
+    
+    # Handle /start command
+    text = message.get('text', '')
+    if text and (text.startswith('/start') or text.startswith(f'/start@{TELEGRAM_BOT_USERNAME}')):
+        user_name = message.get('from', {}).get('first_name', 'there')
         welcome_text = (
             f"Merhaba {user_name}! 👋\n\n"
             "Ben Adım Adım STK yardımcınızım. Bana metin mesajları veya resim gönderebilirsiniz.\n\n"
             "Size nasıl yardımcı olabilirim?"
         )
-        tg_send_message(chat_id, welcome_text)
+        tg_send_message(chat_id, welcome_text, reply_to_message_id=reply_to_id)
             
         return {
             'statusCode': 200,
@@ -486,7 +657,8 @@ def lambda_handler(event, context):
         print(f"[FLOW] Unsupported content type detected")
         tg_send_message(chat_id, 
             f"Yalnızca metin ya da resim kabul edebiliyorum.\n\n"
-            "Size nasıl yardımcı olabilirim?"
+            "Size nasıl yardımcı olabilirim?",
+            reply_to_message_id=reply_to_id
         )
 
         return {"statusCode": 200, "body": "unsupported content type"}
@@ -547,7 +719,7 @@ def lambda_handler(event, context):
         if not replies:
             msg = "Güncel yanıt bulunamadı, lütfen tekrar deneyin." if not sent_image else \
                   "Görsel alındı, yanıt hazırlanıyor."
-            tg_send_message(chat_id, msg)
+            tg_send_message(chat_id, msg, reply_to_message_id=reply_to_id)
             dt = time.time() - t0
             print(f"[DONE] no replies total_ms={int(dt*1000)}")
             return {"statusCode": 200, "body": "ok"}
@@ -555,18 +727,18 @@ def lambda_handler(event, context):
         for idx, r in enumerate(replies, 1):
             print(f"[REPLY] #{idx} text_len={len(r.get('text') or '')} atts={len(r.get('attachments') or [])}")
             if r.get("text"):
-                tg_send_message(chat_id, r["text"])
+                tg_send_message(chat_id, r["text"], reply_to_message_id=reply_to_id)
             for a in (r.get("attachments") or []):
                 curl = a.get("contentUrl")
                 ctype = a.get("contentType", "")
                 name = a.get("name") or ""
                 print(f"[REPLY-ATT] type={ctype} url_present={bool(curl)} name={name}")
                 if curl and curl.startswith("http") and ctype.startswith("image/"):
-                    tg_send_photo_by_url(chat_id, curl, caption=name)
+                    tg_send_photo_by_url(chat_id, curl, caption=name, reply_to_message_id=reply_to_id)
 
     except Exception as ex:
         print(f"[ERROR] flow ex={ex}")
-        tg_send_message(chat_id, f"Bir hata oluştu ({ex}). Lütfen tekrar deneyiniz.")
+        tg_send_message(chat_id, f"Bir hata oluştu ({ex}). Lütfen tekrar deneyiniz.", reply_to_message_id=reply_to_id)
 
     dt = time.time() - t0
     print(f"[DONE] total_ms={int(dt*1000)}")
