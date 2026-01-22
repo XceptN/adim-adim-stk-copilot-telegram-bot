@@ -484,7 +484,11 @@ def lambda_handler(event, context):
 
     if unsupported_content:
         print(f"[FLOW] Unsupported content type detected")
-        tg_send_message(chat_id, "Yalnızca metin ya da resim gönderildiğinde yardımcı olabilirim.")
+        tg_send_message(chat_id, 
+            f"Yalnızca metin ya da resim kabul edebiliyorum.\n\n"
+            "Size nasıl yardımcı olabilirim?"
+        )
+
         return {"statusCode": 200, "body": "unsupported content type"}
 
     if not caption and not text:
