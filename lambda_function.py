@@ -1,5 +1,5 @@
 # lambda_function.py  -- verbose logging (print) enabled
-# v7: Multipart upload yerine INLINE BASE64 DATA URL kullanır
+# v8: Copilot Studio'nun beklediği EXACT format
 import base64
 import json
 import mimetypes
@@ -10,7 +10,7 @@ import urllib.parse
 import urllib.error
 import uuid
 import random
-from datetime import datetime
+from datetime import datetime, timezone
 from wsgiref import headers
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
@@ -52,6 +52,63 @@ def http_post_json(url, payload, headers=None, timeout=20):
         data = resp.read()
         print(f"[HTTP][POST-JSON][{url}] status={resp.status} len={len(data)}")
         return data, resp.getcode(), dict(resp.headers)
+
+def http_post_multipart_copilot(url, activity_json, file_name, file_content, file_content_type, headers=None, timeout=90):
+    """
+    Copilot Studio'nun EXACT beklediği multipart format:
+    - activity part: name="activity", filename="blob", Content-Type: application/vnd.microsoft.activity
+    - file part: name="file", filename="xxx.jpg", Content-Type: image/jpeg
+    """
+    boundary = f"----WebKitFormBoundary{uuid.uuid4().hex}"
+    
+    print(f"[HTTP][POST-COPILOT] url={url} boundary={boundary} file={file_name}")
+    
+    CRLF = b"\r\n"
+    body_parts = []
+    
+    # Part 1: activity - EXACT Copilot format
+    body_parts.append(f"--{boundary}".encode())
+    body_parts.append(b'Content-Disposition: form-data; name="activity"; filename="blob"')
+    body_parts.append(b'Content-Type: application/vnd.microsoft.activity')
+    body_parts.append(b'')  # Empty line between headers and content
+    body_parts.append(activity_json.encode('utf-8'))
+    
+    # Part 2: file
+    body_parts.append(f"--{boundary}".encode())
+    body_parts.append(f'Content-Disposition: form-data; name="file"; filename="{file_name}"'.encode())
+    body_parts.append(f'Content-Type: {file_content_type}'.encode())
+    body_parts.append(b'')
+    body_parts.append(file_content)
+    
+    # Final boundary
+    body_parts.append(f"--{boundary}--".encode())
+    
+    data = CRLF.join(body_parts)
+    
+    h = {
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+        "Content-Length": str(len(data))
+    }
+    if headers:
+        h.update(headers)
+    
+    print(f"[HTTP][POST-COPILOT] total_bytes={len(data)}")
+    
+    # Debug: Show first 1500 chars (excluding binary image data)
+    debug_preview = data[:1500].decode('utf-8', errors='replace')
+    print(f"[HTTP][POST-COPILOT] body_preview:\n{debug_preview}")
+    
+    try:
+        req = urllib.request.Request(url, data=data, headers=h, method="POST")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            rdata = resp.read()
+            print(f"[HTTP][POST-COPILOT] status={resp.status} response={rdata.decode('utf-8', errors='replace')[:500]}")
+            return rdata, resp.getcode(), dict(resp.headers)
+    except urllib.error.HTTPError as e:
+        err_body = e.read()
+        print(f"[HTTP][POST-COPILOT][ERR] status={e.code} body={err_body}")
+        return err_body, e.code, dict(e.headers or {})
+
 
 def _redact_headers(h):
     if not h: return {}
@@ -147,13 +204,13 @@ def dl_post_text(token, conversation_id_unused, text, user_id):
 
 def dl_upload_image(token, conversation_id_unused, filename, content_type, content_bytes, user_id, text):
     """
-    INLINE BASE64 DATA URL yaklaşımı.
-    Multipart upload sorunlu olduğu için, görseli base64 olarak activity içinde gönderiyoruz.
+    Copilot Studio format ile görsel upload.
+    Activity içinde thumbnailUrl, channelData ve diğer metadata'lar var.
     """
     headers = {"Authorization": f"Bearer {token}"}
     
     # 1) Konuşmayı AÇ
-    print("[DL] start conversation (always) for image")
+    print("[DL] start conversation (always) for upload")
     b_start, c_start, _ = http_post_json(f"{DIRECTLINE_BASE_URL}/v3/directline/conversations", {}, headers)
     if c_start not in (200, 201):
         print(f"[DL][ERR] start conversation failed status={c_start} body={b_start}")
@@ -161,7 +218,7 @@ def dl_upload_image(token, conversation_id_unused, filename, content_type, conte
     conv_id = json.loads(b_start.decode())["conversationId"]
     print(f"[DL] conversation started id={conv_id}")
     
-    # 2) Text'i temizle
+    # 2) Text temizle
     if not text or text.strip() == "":
         text = DEFAULT_PROMPT
     text = text.strip()
@@ -179,37 +236,63 @@ def dl_upload_image(token, conversation_id_unused, filename, content_type, conte
         content_type = guessed or "image/jpeg"
         print(f"[DL] Adjusted content_type to: {content_type}")
     
-    # 4) Base64 encode
-    b64_data = base64.b64encode(content_bytes).decode('ascii')
-    data_url = f"data:{content_type};base64,{b64_data}"
+    # 4) Thumbnail oluştur (base64)
+    thumbnail_b64 = base64.b64encode(content_bytes).decode('ascii')
+    thumbnail_url = f"data:{content_type};base64,{thumbnail_b64}"
     
-    print(f"[DL] Base64 data URL created, length: {len(data_url)} chars")
+    # 5) Timestamps
+    now = datetime.now(timezone.utc)
+    local_timestamp = now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}+00:00"
     
-    # 5) Activity with inline attachment
+    # 6) Activity JSON - Copilot Studio formatı
+    client_activity_id = uuid.uuid4().hex[:12]
+    
     activity = {
-        "type": "message",
-        "from": {"id": user_id},
-        "text": text,
         "attachments": [
             {
                 "contentType": content_type,
-                "contentUrl": data_url,
-                "name": filename
+                "name": filename,
+                "thumbnailUrl": thumbnail_url
             }
-        ]
+        ],
+        "channelData": {
+            "attachmentSizes": [len(content_bytes)],
+            "clientActivityID": client_activity_id
+        },
+        "text": text,
+        "textFormat": "plain",
+        "type": "message",
+        "channelId": "webchat",
+        "from": {
+            "id": user_id,
+            "name": "",
+            "role": "user"
+        },
+        "locale": "en-US",
+        "localTimestamp": local_timestamp,
+        "localTimezone": "UTC"
     }
     
-    print(f"[DL] Activity: type=message, text='{text[:50]}...', attachments=1")
+    activity_json = json.dumps(activity, ensure_ascii=False)
+    print(f"[DL] Activity JSON (first 500 chars): {activity_json[:500]}...")
+
+    # 7) Upload URL
+    upload_url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/upload?userId={urllib.parse.quote(user_id)}"
+    print(f"[DL] upload URL: {upload_url}")
     
-    # 6) POST to activities endpoint (NOT upload endpoint)
-    activities_url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/activities"
-    print(f"[DL] POST to: {activities_url}")
-    
-    # Timeout'u artır çünkü büyük payload
-    b_post, c_post, _ = http_post_json(activities_url, activity, headers, timeout=60)
-    
-    if c_post in (200, 201):
-        print(f"[DL] Activity POST SUCCESS! status={c_post}")
+    # 8) Copilot format ile upload
+    b_up, c_up, h_up = http_post_multipart_copilot(
+        upload_url,
+        activity_json,
+        filename,
+        content_bytes,
+        content_type,
+        headers=headers,
+        timeout=90
+    )
+
+    if c_up in (200, 201):
+        print(f"[DL] upload SUCCESS! status={c_up}")
         
         # Doğrulama
         time.sleep(0.5)
@@ -237,23 +320,17 @@ def dl_upload_image(token, conversation_id_unused, filename, content_type, conte
                     ct = att.get('contentType', '')
                     curl = att.get('contentUrl', '')
                     print(f"[DL] ✓ attachment contentType: {ct}")
-                    # Data URL çok uzun, sadece başını göster
                     if curl.startswith('data:'):
-                        print(f"[DL] ✓ attachment contentUrl: data:{ct};base64,... (length: {len(curl)})")
+                        print(f"[DL] ✓ attachment contentUrl: data URL (length: {len(curl)})")
+                    elif "bot-framework-default-placeholder" in curl:
+                        print(f"[DL] ⚠️ PROBLEM: Still getting placeholder URL!")
                     else:
                         print(f"[DL] ✓ attachment contentUrl: {curl[:100]}...")
-                    
-                    if "bot-framework-default-placeholder" in curl:
-                        print("[DL] ⚠️ PROBLEM: Still getting placeholder URL!")
-                    if not last_user.get('text'):
-                        print("[DL] ⚠️ PROBLEM: Text is empty!")
-                else:
-                    print("[DL] ⚠️ PROBLEM: No attachments!")
         
         return conv_id
     
-    print(f"[DL][ERR] Activity POST failed status={c_post} body={b_post}")
-    raise RuntimeError(f"Activity POST failed: {c_post} {b_post}")
+    print(f"[DL][ERR] upload failed status={c_up} body={b_up}")
+    raise RuntimeError(f"Upload failed: {c_up} {b_up}")
 
 def dl_poll_reply_text_and_attachments(token, conversation_id,
                                        max_wait_seconds=None,
@@ -406,7 +483,7 @@ def lambda_handler(event, context):
                 print(f"[FLOW] No image, sending text only: len={len(message_to_send)}")
                 conv_id = dl_post_text(token, conv_id, message_to_send, user_id)
         
-        # Eğer görsel VARSA, text + görsel birlikte gönder (inline base64)
+        # Eğer görsel VARSA, Copilot format ile gönder
         sent_image = False
 
         if photo_sizes:
