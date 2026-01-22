@@ -1,5 +1,5 @@
-
 # lambda_function.py  -- verbose logging (print) enabled
+# FIX: Multipart sıralaması düzeltildi - önce activity, sonra file
 import base64
 import json
 import mimetypes
@@ -57,6 +57,10 @@ def http_post_json(url, payload, headers=None, timeout=20):
         return data, resp.getcode(), dict(resp.headers)
 
 def http_post_multipart(url, fields, files, headers=None, timeout=90):
+    """
+    FIXED: Direct Line için sıralama düzeltildi.
+    Önce fields (activity), sonra files (görsel).
+    """
     boundary = "----WebKitFormBoundary{}".format(uuid.uuid4().hex)
     print(f"[HTTP][POST-MP] url={url} boundary={boundary} fields={list(fields.keys()) if fields else []} "
           f"files={[f.get('filename') for f in (files or [])]}")
@@ -69,24 +73,38 @@ def http_post_multipart(url, fields, files, headers=None, timeout=90):
         body_parts.append(b"")
         body_parts.append(content if isinstance(content, (bytes, bytearray)) else content.encode("utf-8"))
 
-    for f in (files or []):
-        add_part({
-            "Content-Disposition": f'form-data; name="{f["name"]}"; filename="{f["filename"]}"',
-            "Content-Type": f.get("content_type") or "application/octet-stream",
-        }, f["content"])
-
+    # ============================================================
+    # FIX: ÖNCE FIELDS (activity), SONRA FILES (görsel)
+    # ============================================================
+    
+    # 1) Önce fields (activity JSON)
     for name, (content, ctype) in (fields or {}).items():
         if name == "activity":
             add_part({
                 "Content-Disposition": f'form-data; name="{name}"',  
-                "Content-Type": ctype or "application/vnd.microsoft.activity",
+                "Content-Type": "application/json; charset=utf-8",  # FIX: JSON olarak belirt
             }, content)
         else:
-            # Diğer field'lar için önceki davranış korunabilir veya filename kaldırılabilir
             add_part({
                 "Content-Disposition": f'form-data; name="{name}"',
                 "Content-Type": ctype or "text/plain; charset=utf-8",
             }, content)
+
+    # 2) Sonra files (görsel)
+    for f in (files or []):
+        # FIX: content_type'ı açıkça kullan, fallback olarak octet-stream kullanma
+        file_content_type = f.get("content_type")
+        if not file_content_type or file_content_type == "application/octet-stream":
+            # Dosya adından tahmin et
+            guessed = mimetypes.guess_type(f.get("filename", ""))[0]
+            file_content_type = guessed or "image/jpeg"  # Varsayılan olarak image/jpeg
+        
+        print(f"[HTTP][POST-MP] Adding file: {f.get('filename')} with Content-Type: {file_content_type}")
+        
+        add_part({
+            "Content-Disposition": f'form-data; name="{f["name"]}"; filename="{f["filename"]}"',
+            "Content-Type": file_content_type,
+        }, f["content"])
 
     body_parts.append(("--" + boundary + "--").encode())
     data = b"\r\n".join(body_parts)
@@ -97,6 +115,10 @@ def http_post_multipart(url, fields, files, headers=None, timeout=90):
         h.update(headers)
 
     print(f"[HTTP][POST-MP] headers={_redact_headers(h)} total_bytes={len(data)}")
+    
+    # Debug: İlk 800 byte'ı göster (görseli hariç)
+    debug_str = data[:800].decode('utf-8', errors='replace')
+    print(f"[HTTP][POST-MP] body_preview:\n{debug_str}")
 
     try:
         req = urllib.request.Request(url, data=data, headers=h, method="POST")
@@ -107,13 +129,11 @@ def http_post_multipart(url, fields, files, headers=None, timeout=90):
     except urllib.error.HTTPError as e:
         err_body = e.read()
         print(f"[HTTP][POST-MP][ERR] status={e.code} body={err_body}")
-        # Aynı interface'i koruyalım:
         return err_body, e.code, dict(e.headers or {})
 
 
 def _redact_headers(h):
     if not h: return {}
-    # Authorization/Token gibi alanları logda maskele
     redacted = {}
     for k, v in h.items():
         if k.lower() == "authorization":
@@ -142,7 +162,6 @@ def tg_send_photo_by_url(chat_id, url_or_fileid, caption=None):
     return code == 200
 
 def tg_get_file(file_id):
-    # getFile -> file_path; sonra /file/ URL’inden indir.  (≥1 saat geçerli, 20MB sınırı) [2](https://community.powerplatform.com/forums/thread/details/?threadid=4d0f9b82-80cf-ef11-b8e8-6045bdd9204f)[3](https://tecnobits.com/en/How-to-use-Microsoft-Copilot-on-Telegram/)
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={urllib.parse.quote(file_id)}"
     print(f"[TG] getFile file_id={file_id}")
     body, code, _ = http_get(url)
@@ -167,7 +186,6 @@ def tg_download_file(download_url):
 
 # -------- Helpers: Direct Line --------
 def dl_get_token_and_conversation_via_secret():
-    # Secret -> token generate (Direct Line 3.0)  [4](https://hookdeck.com/webhooks/platforms/how-to-receive-and-replay-external-webhooks-in-aws-lambda-with-hookdeck)
     url = f"{DIRECTLINE_BASE_URL}/v3/directline/tokens/generate"
     headers = {"Authorization": f"Bearer {DIRECTLINE_SECRET}"}
     print(f"[DL] token generate via secret base={DIRECTLINE_BASE_URL}")
@@ -196,13 +214,8 @@ def dl_start_conversation_if_needed(token, conversation_id):
     return conversation_id
 
 def dl_post_text(token, conversation_id_unused, text, user_id):
-    """
-    Her zaman yeni konuşma açar; tokens/generate'dan gelen conv_id'yi kullanmaz.
-    Nedeni: bazı ortamlarda generate yanıtındaki conv_id ilk /activities POST'unda 404'a yol açabiliyor.
-    """
     headers = {"Authorization": f"Bearer {token}"}
 
-    # 1) Konuşmayı AÇ
     print("[DL] start conversation (always)")
     b_start, c_start, _ = http_post_json(f"{DIRECTLINE_BASE_URL}/v3/directline/conversations", {}, headers)
     if c_start not in (200, 201):
@@ -211,7 +224,6 @@ def dl_post_text(token, conversation_id_unused, text, user_id):
     conv_id = json.loads(b_start.decode())["conversationId"]
     print(f"[DL] conversation started id={conv_id}")
 
-    # 2) Mesajı gönder
     url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/activities"
     print(f"[DL] post text conv={conv_id} url={repr(url)} text_len={len(text)}")
     body, code, _ = http_post_json(
@@ -227,7 +239,7 @@ def dl_post_text(token, conversation_id_unused, text, user_id):
 
 def dl_upload_image(token, conversation_id_unused, filename, content_type, content_bytes, user_id, text):
     """
-    Her zaman yeni konuşma açar ve /upload kullanır; başarısız olursa data URL fallback.
+    Görsel upload - multipart kullanır.
     """
     headers = {"Authorization": f"Bearer {token}"}
     
@@ -240,75 +252,75 @@ def dl_upload_image(token, conversation_id_unused, filename, content_type, conte
     conv_id = json.loads(b_start.decode())["conversationId"]
     print(f"[DL] conversation started id={conv_id} (for upload)")
     
-    print(f"[DL] Message Text {text}")
+    print(f"[DL] Message Text: {text}")
+    print(f"[DL] Image: filename={filename}, content_type={content_type}, size={len(content_bytes)} bytes")
 
-    # 2) Upload denemesi
+    # 2) Activity JSON - sadece text, attachment bilgisi yok
     activity = {
         "type": "message",
         "from": {"id": user_id},
-        "text": text or ""#,
-        #"attachments": [{
-        #    "contentType": content_type,
-        #    "name": filename
-        #}]
+        "text": text or ""
     }
-    
     activity_json = json.dumps(activity, ensure_ascii=False)
+    print(f"[DL] Activity JSON: {activity_json}")
 
+    # 3) Multipart fields ve files hazırla
     fields = {
-            "activity": (activity_json, None)
+        "activity": (activity_json, "application/json; charset=utf-8")
     }
-    files  = [{
-        "name":"file",
-        "filename":filename,
-        "content":content_bytes,
-        "content_type":content_type
-    }]
-    upload_url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/upload?userId={urllib.parse.quote(user_id)}"
-    print(f"[DL] upload image conv={conv_id} url={repr(upload_url)} file={filename} ctype={content_type} bytes={len(content_bytes)}")
     
-    b_up, c_up, h_up = http_post_multipart(upload_url, fields, files, headers=headers, timeout=90)    
+    # Content-Type kontrolü
+    if not content_type or content_type == "application/octet-stream":
+        guessed = mimetypes.guess_type(filename)[0]
+        content_type = guessed or "image/jpeg"
+        print(f"[DL] Adjusted content_type to: {content_type}")
+    
+    files = [{
+        "name": "file",
+        "filename": filename,
+        "content": content_bytes,
+        "content_type": content_type
+    }]
+
+    # 4) Upload
+    upload_url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/upload?userId={urllib.parse.quote(user_id)}"
+    print(f"[DL] upload URL: {upload_url}")
+    
+    b_up, c_up, h_up = http_post_multipart(upload_url, fields, files, headers=headers, timeout=90)
 
     if c_up in (200, 201):
-        print("[DL] upload ok; text + attachment sent together??") 
-
-    # Test: upload sonrası activities kontrolü
-        b_act, c_act, h_act = http_get_json(
+        print(f"[DL] upload SUCCESS! status={c_up}")
+        
+        # Doğrulama
+        time.sleep(0.5)
+        b_act, c_act, _ = http_get_json(
             f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/activities",
             headers=headers, timeout=30
         )
         acts = json.loads(b_act.decode("utf-8"))
-        last = acts["activities"][-1]
-        print("last.attachments:", last.get("attachments"))
-        if last.get("attachments"):
-            print("attachment[0].contentType:", last["attachments"][0].get("contentType"))
-            print("attachment[0].contentUrl :", last["attachments"][0].get("contentUrl"))
-
+        
+        if acts.get("activities"):
+            last = acts["activities"][-1]
+            print(f"[DL] Last activity attachments: {last.get('attachments')}")
+            
+            atts = last.get("attachments") or []
+            if atts:
+                att = atts[0]
+                print(f"[DL] ✓ contentType: {att.get('contentType')}")
+                print(f"[DL] ✓ contentUrl: {att.get('contentUrl', 'N/A')[:100]}...")
+                print(f"[DL] ✓ name: {att.get('name')}")
+                
+                # Placeholder kontrolü
+                if "bot-framework-default-placeholder" in att.get('contentUrl', ''):
+                    print("[DL] ⚠️ WARNING: Still getting placeholder URL!")
+            else:
+                print("[DL] ⚠️ WARNING: No attachments in activity!")
+        
         return conv_id
     
-    # 3) Fallback: data URL
-    print(f"[DL][WARN] upload failed status={c_up}; fallback to data URL")
-    data_url = f"data:{content_type};base64,{base64.b64encode(content_bytes).decode()}"
-    act_fb = {
-        "type": "message",
-        "from": {"id": user_id},
-        "attachments": [{
-            "contentType": content_type or "application/octet-stream",
-            "contentUrl": data_url,
-            "name": filename
-        }]
-    }
-    if text:
-        act_fb["text"] = text
-    
-    url_fb = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/activities"
-    print(f"[DL] fallback post (data URL) conv={conv_id} url={repr(url_fb)}")
-    b_fb, c_fb, _ = http_post_json(url_fb, act_fb, headers)
-    if c_fb not in (200, 201):
-        print(f"[DL][ERR] fallback failed status={c_fb} body={b_fb}")
-        raise RuntimeError(f"Upload failed ({c_up}); fallback failed ({c_fb}): {b_fb}")
-    print("[DL] fallback (data URL) ok")
-    return conv_id
+    # Upload başarısız - hata fırlat
+    print(f"[DL][ERR] upload failed status={c_up} body={b_up}")
+    raise RuntimeError(f"Upload failed: {c_up} {b_up}")
 
 def dl_poll_reply_text_and_attachments(token, conversation_id,
                                        max_wait_seconds=None,
@@ -316,16 +328,9 @@ def dl_poll_reply_text_and_attachments(token, conversation_id,
                                        backoff_factor=None,
                                        max_interval=None,
                                        user_id_prefix="tg-"):
-    """
-    Adaptif (artırımlı) polling:
-      - hızlı ilk denemeler
-      - kademeli artan bekleme (exponential backoff) + küçük jitter
-      - DL_MAX_WAIT_SECONDS penceresi boyunca bekler
-    """
     headers = {"Authorization": f"Bearer {token}"}
     url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conversation_id}/activities"
 
-    # Varsayılanları ortamdan çek
     max_wait_seconds = float(max_wait_seconds or DL_MAX_WAIT_SECONDS)
     interval = float(initial_interval or DL_INITIAL_POLL_INTERVAL)
     factor = float(backoff_factor or DL_BACKOFF_FACTOR)
@@ -363,21 +368,19 @@ def dl_poll_reply_text_and_attachments(token, conversation_id,
             print(f"[DL] poll done replies={len(replies)} in_attempts={attempt}")
             return replies
 
-        # Adaptif bekleme + jitter
-        jitter = random.uniform(-0.1, 0.1)  # +/- 100 ms
+        jitter = random.uniform(-0.1, 0.1)
         sleep_for = max(0.1, min(max_interval, interval + jitter))
         now_left = max(0, deadline - time.time())
         sleep_for = min(sleep_for, now_left)
         print(f"[DL] no reply yet; sleeping {sleep_for:.2f}s (attempt={attempt})")
         time.sleep(sleep_for)
 
-        # bir sonraki döngüde aralığı büyüt
         interval = min(max_interval, interval * factor)
 
     print("[DL] poll timeout/no replies (adaptive)")
     return replies
 
-# -------- Security: optional secret_token check --------
+# -------- Security --------
 def validate_telegram_secret(headers):
     if not REQUIRE_TG_SECRET:
         print("[SEC] REQUIRE_TG_SECRET=false -> skipping secret header validation")
@@ -385,7 +388,7 @@ def validate_telegram_secret(headers):
     sent = headers.get("x-telegram-bot-api-secret-token") or headers.get("X-Telegram-Bot-Api-Secret-Token")
     ok = (TELEGRAM_SECRET_TOKEN and sent == TELEGRAM_SECRET_TOKEN)
     print(f"[SEC] secret header present={bool(sent)} match={ok}")
-    return ok  # Telegram secret header opsiyoneldir; verildiyse doğrulanır. [1](https://learn.microsoft.com/en-us/azure/bot-service/rest-api/bot-framework-rest-direct-line-3-0-authentication?view=azure-bot-service-4.0)
+    return ok
 
 # -------- Lambda Handler --------
 def lambda_handler(event, context):
@@ -414,7 +417,6 @@ def lambda_handler(event, context):
 
     message = (update.get("message") or update.get("edited_message")) or {}
     
-    # DEBUG: Print complete message structure
     print(f"[DEBUG] Complete message structure:")
     print(f"[DEBUG] message = {json.dumps(message, ensure_ascii=False, indent=2)}")
     
@@ -428,7 +430,7 @@ def lambda_handler(event, context):
         return {"statusCode": 200, "body": "no chat"}
     
     uid = str(message['from']['id'])
-    # Handle /start command
+    
     if 'text' in message and message['text'].startswith('/start'):
         user_name = message['from'].get('first_name', 'there')
         welcome_text = (
@@ -446,7 +448,6 @@ def lambda_handler(event, context):
     caption = message.get("caption")
     text = message.get("text")
 
-    # Eğer ne text ne caption varsa, varsayılan prompt kullan
     if not caption and not text:
         caption = DEFAULT_PROMPT
         print(f"[FLOW] no caption/text -> using default prompt text_len={len(caption)}")
@@ -457,30 +458,25 @@ def lambda_handler(event, context):
             print(f"[FLOW] text detected len={len(text)}")
 
     try:
-        # 1) Token generate (SECRET -> TOKEN)
         token, conv_id = dl_get_token_and_conversation_via_secret()
 
-        # 2) Metin mesajı (text veya caption varsa)
-        message_to_send = text or caption  # text öncelikli, yoksa caption
+        message_to_send = text or caption
         if message_to_send and message_to_send != DEFAULT_PROMPT:
-            # DEFAULT_PROMPT değilse metin olarak gönder
             print(f"[FLOW] sending text message len={len(message_to_send)}")
             conv_id = dl_post_text(token, conv_id, message_to_send, user_id)
 
-        # 3) Görsel
         photo_sizes = message.get("photo") or []
         doc = message.get("document")
         sent_image = False
 
         if photo_sizes:
-            file_id = photo_sizes[-1]["file_id"]  # en büyük çözünürlük son eleman  [7](https://learn.microsoft.com/en-us/connectors/telegrambotip/)
+            file_id = photo_sizes[-1]["file_id"]
             print(f"[FLOW] photo detected file_id={file_id}")
             download_url, file_path = tg_get_file(file_id)
             img_bytes, content_type = tg_download_file(download_url)
             if not content_type:
                 content_type = mimetypes.guess_type(file_path)[0] or "image/jpeg"
             filename = os.path.basename(file_path) or f"photo_{int(time.time())}.jpg"
-            # Görsel varsa caption kullan (yoksa DEFAULT_PROMPT)
             conv_id = dl_upload_image(token, conv_id, filename, content_type, img_bytes, user_id, caption or DEFAULT_PROMPT)
             sent_image = True
 
@@ -497,7 +493,6 @@ def lambda_handler(event, context):
                 conv_id = dl_upload_image(token, conv_id, filename, content_type, img_bytes, user_id, caption)
                 sent_image = True
 
-        # 4) Bot yanıtlarını topla
         replies = dl_poll_reply_text_and_attachments(token, conv_id, max_wait_seconds=30)
         if not replies:
             msg = "Güncel yanıt bulunamadı, lütfen tekrar deneyin." if not sent_image else \
@@ -507,7 +502,6 @@ def lambda_handler(event, context):
             print(f"[DONE] no replies total_ms={int(dt*1000)}")
             return {"statusCode": 200, "body": "ok"}
 
-        # 5) Yanıtları Telegram'a gönder
         for idx, r in enumerate(replies, 1):
             print(f"[REPLY] #{idx} text_len={len(r.get('text') or '')} atts={len(r.get('attachments') or [])}")
             if r.get("text"):
