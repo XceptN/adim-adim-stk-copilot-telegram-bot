@@ -35,6 +35,15 @@ def http_get(url, headers=None, timeout=15):
         print(f"[HTTP][GET][{url}] status={resp.status} len={len(data)}")
         return data, resp.getcode(), dict(resp.headers)
 
+def http_get_json(url, headers=None, timeout=90):
+    """JSON beklenen GET: (body_bytes, status_code, headers_dict) döndürür.
+       Accept: application/json ekler."""
+    h = dict(headers or {})
+    # Accept başlığı yoksa JSON iste
+    if "Accept" not in {k.title(): v for k, v in h.items()}:
+        h["Accept"] = "application/json"
+    return http_get(url, headers=h, timeout=timeout)
+
 def http_post_json(url, payload, headers=None, timeout=20):
     h = {"Content-Type": "application/json"}
     if headers:
@@ -216,30 +225,6 @@ def dl_post_text(token, conversation_id_unused, text, user_id):
     print("[DL] post text ok")
     return conv_id
 
-def http_get(url, headers=None, timeout=90):
-    """Ham GET: (body_bytes, status_code, headers_dict) döndürür."""
-    try:
-        req = urllib.request.Request(url, headers=headers or {}, method="GET")
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            rdata = resp.read()
-            return rdata, resp.getcode(), dict(resp.headers)
-    except urllib.error.HTTPError as e:
-        err_body = e.read()
-        return err_body, e.code, dict(e.headers or {})
-    except urllib.error.URLError as e:
-        # Network/resolve hataları için 0 status dönelim (senin tarza yakın)
-        return str(e.reason).encode("utf-8"), 0, {}
-
-def http_get_json(url, headers=None, timeout=90):
-    """JSON beklenen GET: (body_bytes, status_code, headers_dict) döndürür.
-       Accept: application/json ekler."""
-    h = dict(headers or {})
-    # Accept başlığı yoksa JSON iste
-    if "Accept" not in {k.title(): v for k, v in h.items()}:
-        h["Accept"] = "application/json"
-    return http_get(url, headers=h, timeout=timeout)
-
-
 def dl_upload_image(token, conversation_id_unused, filename, content_type, content_bytes, user_id, text):
     """
     Her zaman yeni konuşma açar ve /upload kullanır; başarısız olursa data URL fallback.
@@ -255,6 +240,8 @@ def dl_upload_image(token, conversation_id_unused, filename, content_type, conte
     conv_id = json.loads(b_start.decode())["conversationId"]
     print(f"[DL] conversation started id={conv_id} (for upload)")
     
+    print(f"[DL] Message Text {text}")
+
     # 2) Upload denemesi
     activity = {
         "type": "message",
