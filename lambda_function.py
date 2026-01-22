@@ -458,6 +458,35 @@ def lambda_handler(event, context):
     caption = message.get("caption")
     text = message.get("text")
 
+    # Desteklenen içerik türlerini kontrol et
+    photo_sizes = message.get("photo") or []
+    doc = message.get("document")
+    is_image_doc = doc and isinstance(doc, dict) and str(doc.get("mime_type","")).startswith("image/")
+    has_image = bool(photo_sizes) or is_image_doc
+    has_text = bool(text)
+
+    # Desteklenmeyen içerik türleri kontrolü
+    unsupported_content = (
+        message.get("video") or
+        message.get("audio") or
+        message.get("voice") or
+        message.get("video_note") or
+        message.get("sticker") or
+        message.get("animation") or
+        message.get("location") or
+        message.get("venue") or
+        message.get("contact") or
+        message.get("poll") or
+        message.get("dice") or
+        message.get("game") or
+        (doc and not is_image_doc)  # Resim olmayan dökümanlar
+    )
+
+    if unsupported_content:
+        print(f"[FLOW] Unsupported content type detected")
+        tg_send_message(chat_id, "Yalnızca metin ya da resim gönderildiğinde yardımcı olabilirim.")
+        return {"statusCode": 200, "body": "unsupported content type"}
+
     if not caption and not text:
         caption = DEFAULT_PROMPT
         print(f"[FLOW] no caption/text -> using default prompt text_len={len(caption)}")
@@ -471,11 +500,6 @@ def lambda_handler(event, context):
         token, conv_id = dl_get_token_and_conversation_via_secret()
 
         message_to_send = text or caption
-        
-        # Görsel var mı kontrol et
-        photo_sizes = message.get("photo") or []
-        doc = message.get("document")
-        has_image = bool(photo_sizes) or (doc and isinstance(doc, dict) and str(doc.get("mime_type","")).startswith("image/"))
         
         # Eğer görsel YOKSA, sadece text gönder
         if not has_image:
