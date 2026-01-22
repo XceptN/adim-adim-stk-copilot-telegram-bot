@@ -11,6 +11,7 @@ import urllib.error
 import uuid
 import random
 from datetime import datetime
+from wsgiref import headers
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 REQUIRE_TG_SECRET  = os.environ.get("REQUIRE_TG_SECRET", "false").lower() == "true"
@@ -60,10 +61,18 @@ def http_post_multipart(url, fields, files, headers=None, timeout=90):
         body_parts.append(content if isinstance(content, (bytes, bytearray)) else content.encode("utf-8"))
 
     for name, (content, ctype) in (fields or {}).items():
-        add_part({
-            "Content-Disposition": f'form-data; name="{name}"; filename="blob"',
-            "Content-Type": ctype or "text/plain; charset=utf-8",
-        }, content)
+        if name == "activity":
+            add_part({
+                "Content-Disposition": f'form-data; name="{name}"',  # <-- filename yok
+                "Content-Type": ctype or "application/vnd.microsoft.activity+json; charset=utf-8",
+            }, content)
+        else:
+            # Diğer field'lar için önceki davranış korunabilir veya filename kaldırılabilir
+            add_part({
+                "Content-Disposition": f'form-data; name="{name}"',
+                "Content-Type": ctype or "text/plain; charset=utf-8",
+            }, content)
+
 
     for f in (files or []):
         add_part({
@@ -208,6 +217,30 @@ def dl_post_text(token, conversation_id_unused, text, user_id):
     print("[DL] post text ok")
     return conv_id
 
+def http_get(url, headers=None, timeout=90):
+    """Ham GET: (body_bytes, status_code, headers_dict) döndürür."""
+    try:
+        req = urllib.request.Request(url, headers=headers or {}, method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            rdata = resp.read()
+            return rdata, resp.getcode(), dict(resp.headers)
+    except urllib.error.HTTPError as e:
+        err_body = e.read()
+        return err_body, e.code, dict(e.headers or {})
+    except urllib.error.URLError as e:
+        # Network/resolve hataları için 0 status dönelim (senin tarza yakın)
+        return str(e.reason).encode("utf-8"), 0, {}
+
+def http_get_json(url, headers=None, timeout=90):
+    """JSON beklenen GET: (body_bytes, status_code, headers_dict) döndürür.
+       Accept: application/json ekler."""
+    h = dict(headers or {})
+    # Accept başlığı yoksa JSON iste
+    if "Accept" not in {k.title(): v for k, v in h.items()}:
+        h["Accept"] = "application/json"
+    return http_get(url, headers=h, timeout=timeout)
+
+
 def dl_upload_image(token, conversation_id_unused, filename, content_type, content_bytes, user_id, text):
     """
     Her zaman yeni konuşma açar ve /upload kullanır; başarısız olursa data URL fallback.
@@ -227,37 +260,44 @@ def dl_upload_image(token, conversation_id_unused, filename, content_type, conte
     activity = {
         "type": "message",
         "from": {"id": user_id},
-        "attachments": [{
-            "contentType": content_type,
-            "name": filename
-        }]
+        "text": text or "" #,
+        #"attachments": [{
+        #    "contentType": content_type,
+        #    "name": filename
+        #}]
     }
     
-    fields = {"activity": (json.dumps(activity), "application/vnd.microsoft.activity+json")}
-    files  = [{"name":"file","filename":filename,"content":content_bytes,
-               "content_type":content_type or "application/octet-stream"}]
+    activity_json = json.dumps(activity, ensure_ascii=False)
+
+    fields = {
+            "activity": (activity_json, "application/vnd.microsoft.activity+json; charset=utf-8")
+    }
+    files  = [{
+        "name":"file",
+        "filename":filename,
+        "content":content_bytes,
+        "content_type":content_type or "application/octet-stream"
+    }]
     upload_url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/upload?userId={urllib.parse.quote(user_id)}"
     print(f"[DL] upload image conv={conv_id} url={repr(upload_url)} file={filename} ctype={content_type} bytes={len(content_bytes)}")
-    b_up, c_up, _ = http_post_multipart(upload_url, fields, files, headers=headers, timeout=90)
     
+    b_up, c_up, h_up = http_post_multipart(upload_url, fields, files, headers=headers, timeout=90)    
+
     if c_up in (200, 201):
-        print("[DL] upload ok")
-        
-        # *** YENİ: Upload başarılıysa text'i ayrı mesaj olarak gönder ***
-        if text:
-            print(f"[DL] sending text message after upload text_len={len(text)}")
-            text_activity = {
-                "type": "message",
-                "from": {"id": user_id},
-                "text": text
-            }
-            activities_url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/activities"
-            b_txt, c_txt, _ = http_post_json(activities_url, text_activity, headers)
-            if c_txt in (200, 201):
-                print("[DL] text message sent ok")
-            else:
-                print(f"[DL][WARN] text message failed status={c_txt}")
-        
+        print("[DL] upload ok; text + attachment sent together??") 
+
+    # Test: upload sonrası activities kontrolü
+        b_act, c_act, h_act = http_get_json(
+            f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/activities",
+            headers=headers, timeout=30
+        )
+        acts = json.loads(b_act.decode("utf-8"))
+        last = acts["activities"][-1]
+        print("last.attachments:", last.get("attachments"))
+        if last.get("attachments"):
+            print("attachment[0].contentType:", last["attachments"][0].get("contentType"))
+            print("attachment[0].contentUrl :", last["attachments"][0].get("contentUrl"))
+
         return conv_id
     
     # 3) Fallback: data URL
