@@ -1,5 +1,5 @@
 # lambda_function.py  -- verbose logging (print) enabled
-# FIX: Multipart sıralaması düzeltildi - önce activity, sonra file
+# v6: Text ve görsel AYNI activity'de birlikte gönderilir
 import base64
 import json
 import mimetypes
@@ -18,13 +18,13 @@ REQUIRE_TG_SECRET  = os.environ.get("REQUIRE_TG_SECRET", "false").lower() == "tr
 TELEGRAM_SECRET_TOKEN = os.environ.get("TELEGRAM_SECRET_TOKEN", "")
 DIRECTLINE_SECRET  = os.environ["DIRECTLINE_SECRET"]
 DIRECTLINE_BASE_URL = os.environ.get("DIRECTLINE_BASE_URL", "https://directline.botframework.com")
-DEFAULT_PROMPT = os.environ.get("DEFAULT_PROMPT", "Buradaki problemi nasıl çözebilirim?")
+DEFAULT_PROMPT = os.environ.get("DEFAULT_PROMPT", "Bu ekran görüntüsündeki problemi nasıl çözebilirim?")
 
 # ---- Tuning knobs for polling patience ----
-DL_MAX_WAIT_SECONDS = float(os.environ.get("DL_MAX_WAIT_SECONDS", "30"))          # toplam bekleme penceresi
-DL_INITIAL_POLL_INTERVAL = float(os.environ.get("DL_INITIAL_POLL_INTERVAL", "0.6"))  # ilk aralık (sn)
-DL_BACKOFF_FACTOR = float(os.environ.get("DL_BACKOFF_FACTOR", "1.5"))            # çarpan
-DL_MAX_POLL_INTERVAL = float(os.environ.get("DL_MAX_POLL_INTERVAL", "3.0"))      # en fazla aralık (sn)
+DL_MAX_WAIT_SECONDS = float(os.environ.get("DL_MAX_WAIT_SECONDS", "30"))
+DL_INITIAL_POLL_INTERVAL = float(os.environ.get("DL_INITIAL_POLL_INTERVAL", "0.6"))
+DL_BACKOFF_FACTOR = float(os.environ.get("DL_BACKOFF_FACTOR", "1.5"))
+DL_MAX_POLL_INTERVAL = float(os.environ.get("DL_MAX_POLL_INTERVAL", "3.0"))
 
 # -------- Helpers: HTTP --------
 def http_get(url, headers=None, timeout=15):
@@ -36,10 +36,7 @@ def http_get(url, headers=None, timeout=15):
         return data, resp.getcode(), dict(resp.headers)
 
 def http_get_json(url, headers=None, timeout=90):
-    """JSON beklenen GET: (body_bytes, status_code, headers_dict) döndürür.
-       Accept: application/json ekler."""
     h = dict(headers or {})
-    # Accept başlığı yoksa JSON iste
     if "Accept" not in {k.title(): v for k, v in h.items()}:
         h["Accept"] = "application/json"
     return http_get(url, headers=h, timeout=timeout)
@@ -58,8 +55,8 @@ def http_post_json(url, payload, headers=None, timeout=20):
 
 def http_post_multipart(url, fields, files, headers=None, timeout=90):
     """
-    FIXED: Direct Line için sıralama düzeltildi.
-    Önce fields (activity), sonra files (görsel).
+    Direct Line için multipart POST.
+    Sıralama: önce fields (activity), sonra files (görsel).
     """
     boundary = "----WebKitFormBoundary{}".format(uuid.uuid4().hex)
     print(f"[HTTP][POST-MP] url={url} boundary={boundary} fields={list(fields.keys()) if fields else []} "
@@ -73,16 +70,12 @@ def http_post_multipart(url, fields, files, headers=None, timeout=90):
         body_parts.append(b"")
         body_parts.append(content if isinstance(content, (bytes, bytearray)) else content.encode("utf-8"))
 
-    # ============================================================
-    # FIX: ÖNCE FIELDS (activity), SONRA FILES (görsel)
-    # ============================================================
-    
     # 1) Önce fields (activity JSON)
     for name, (content, ctype) in (fields or {}).items():
         if name == "activity":
             add_part({
                 "Content-Disposition": f'form-data; name="{name}"',  
-                "Content-Type": "application/json; charset=utf-8",  # FIX: JSON olarak belirt
+                "Content-Type": "application/json; charset=utf-8",
             }, content)
         else:
             add_part({
@@ -92,12 +85,10 @@ def http_post_multipart(url, fields, files, headers=None, timeout=90):
 
     # 2) Sonra files (görsel)
     for f in (files or []):
-        # FIX: content_type'ı açıkça kullan, fallback olarak octet-stream kullanma
         file_content_type = f.get("content_type")
         if not file_content_type or file_content_type == "application/octet-stream":
-            # Dosya adından tahmin et
             guessed = mimetypes.guess_type(f.get("filename", ""))[0]
-            file_content_type = guessed or "image/jpeg"  # Varsayılan olarak image/jpeg
+            file_content_type = guessed or "image/jpeg"
         
         print(f"[HTTP][POST-MP] Adding file: {f.get('filename')} with Content-Type: {file_content_type}")
         
@@ -116,8 +107,8 @@ def http_post_multipart(url, fields, files, headers=None, timeout=90):
 
     print(f"[HTTP][POST-MP] headers={_redact_headers(h)} total_bytes={len(data)}")
     
-    # Debug: İlk 800 byte'ı göster (görseli hariç)
-    debug_str = data[:800].decode('utf-8', errors='replace')
+    # Debug: İlk 1000 byte'ı göster
+    debug_str = data[:1000].decode('utf-8', errors='replace')
     print(f"[HTTP][POST-MP] body_preview:\n{debug_str}")
 
     try:
@@ -239,7 +230,8 @@ def dl_post_text(token, conversation_id_unused, text, user_id):
 
 def dl_upload_image(token, conversation_id_unused, filename, content_type, content_bytes, user_id, text):
     """
-    Görsel upload - multipart kullanır.
+    Görsel + Text AYNI MESAJDA gönderilir.
+    Activity JSON içinde text var, multipart'ta görsel var.
     """
     headers = {"Authorization": f"Bearer {token}"}
     
@@ -252,24 +244,34 @@ def dl_upload_image(token, conversation_id_unused, filename, content_type, conte
     conv_id = json.loads(b_start.decode())["conversationId"]
     print(f"[DL] conversation started id={conv_id} (for upload)")
     
-    print(f"[DL] Message Text: {text}")
+    # 2) Text'i temizle - fazladan tırnak varsa kaldır
+    if not text or text.strip() == "":
+        text = DEFAULT_PROMPT
+    
+    # Başındaki ve sonundaki tırnak işaretlerini kaldır
+    text = text.strip()
+    if text.startswith('"') and text.endswith('"'):
+        text = text[1:-1]
+    if text.startswith("'") and text.endswith("'"):
+        text = text[1:-1]
+    
+    print(f"[DL] Message Text (cleaned): {text}")
     print(f"[DL] Image: filename={filename}, content_type={content_type}, size={len(content_bytes)} bytes")
 
-    # 2) Activity JSON - sadece text, attachment bilgisi yok
+    # 3) Activity JSON - TEXT BURADA, görsel multipart'ta
     activity = {
         "type": "message",
         "from": {"id": user_id},
-        "text": text or ""
+        "text": text
     }
     activity_json = json.dumps(activity, ensure_ascii=False)
     print(f"[DL] Activity JSON: {activity_json}")
 
-    # 3) Multipart fields ve files hazırla
+    # 4) Multipart hazırla
     fields = {
         "activity": (activity_json, "application/json; charset=utf-8")
     }
     
-    # Content-Type kontrolü
     if not content_type or content_type == "application/octet-stream":
         guessed = mimetypes.guess_type(filename)[0]
         content_type = guessed or "image/jpeg"
@@ -282,7 +284,7 @@ def dl_upload_image(token, conversation_id_unused, filename, content_type, conte
         "content_type": content_type
     }]
 
-    # 4) Upload
+    # 5) Upload - TEXT + GÖRSEL BİRLİKTE
     upload_url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/upload?userId={urllib.parse.quote(user_id)}"
     print(f"[DL] upload URL: {upload_url}")
     
@@ -291,7 +293,7 @@ def dl_upload_image(token, conversation_id_unused, filename, content_type, conte
     if c_up in (200, 201):
         print(f"[DL] upload SUCCESS! status={c_up}")
         
-        # Doğrulama
+        # Doğrulama - activity'nin nasıl kaydedildiğini kontrol et
         time.sleep(0.5)
         b_act, c_act, _ = http_get_json(
             f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/activities",
@@ -299,26 +301,38 @@ def dl_upload_image(token, conversation_id_unused, filename, content_type, conte
         )
         acts = json.loads(b_act.decode("utf-8"))
         
+        print(f"[DL] Total activities: {len(acts.get('activities', []))}")
+        
         if acts.get("activities"):
-            last = acts["activities"][-1]
-            print(f"[DL] Last activity attachments: {last.get('attachments')}")
+            # Kullanıcının gönderdiği mesajı bul
+            user_acts = [a for a in acts["activities"] if a.get("from", {}).get("id", "").startswith("tg-")]
             
-            atts = last.get("attachments") or []
-            if atts:
-                att = atts[0]
-                print(f"[DL] ✓ contentType: {att.get('contentType')}")
-                print(f"[DL] ✓ contentUrl: {att.get('contentUrl', 'N/A')[:100]}...")
-                print(f"[DL] ✓ name: {att.get('name')}")
+            if user_acts:
+                last_user = user_acts[-1]
+                print(f"[DL] === USER MESSAGE AS RECEIVED BY BOT ===")
+                print(f"[DL] text: '{last_user.get('text', '')}'")
+                print(f"[DL] attachments: {last_user.get('attachments')}")
                 
-                # Placeholder kontrolü
-                if "bot-framework-default-placeholder" in att.get('contentUrl', ''):
-                    print("[DL] ⚠️ WARNING: Still getting placeholder URL!")
-            else:
-                print("[DL] ⚠️ WARNING: No attachments in activity!")
+                atts = last_user.get("attachments") or []
+                if atts:
+                    att = atts[0]
+                    ct = att.get('contentType', '')
+                    curl = att.get('contentUrl', '')
+                    print(f"[DL] ✓ attachment contentType: {ct}")
+                    print(f"[DL] ✓ attachment contentUrl: {curl[:100] if curl else 'N/A'}...")
+                    
+                    # Sorun tespiti
+                    if ct == "application/octet-stream":
+                        print("[DL] ⚠️ PROBLEM: contentType is octet-stream, not image!")
+                    if "bot-framework-default-placeholder" in curl:
+                        print("[DL] ⚠️ PROBLEM: Still getting placeholder URL!")
+                    if not last_user.get('text'):
+                        print("[DL] ⚠️ PROBLEM: Text is empty in the received activity!")
+                else:
+                    print("[DL] ⚠️ PROBLEM: No attachments in user activity!")
         
         return conv_id
     
-    # Upload başarısız - hata fırlat
     print(f"[DL][ERR] upload failed status={c_up} body={b_up}")
     raise RuntimeError(f"Upload failed: {c_up} {b_up}")
 
@@ -461,12 +475,19 @@ def lambda_handler(event, context):
         token, conv_id = dl_get_token_and_conversation_via_secret()
 
         message_to_send = text or caption
-        if message_to_send and message_to_send != DEFAULT_PROMPT:
-            print(f"[FLOW] sending text message len={len(message_to_send)}")
-            conv_id = dl_post_text(token, conv_id, message_to_send, user_id)
-
+        
+        # Görsel var mı kontrol et
         photo_sizes = message.get("photo") or []
         doc = message.get("document")
+        has_image = bool(photo_sizes) or (doc and isinstance(doc, dict) and str(doc.get("mime_type","")).startswith("image/"))
+        
+        # Eğer görsel YOKSA, sadece text gönder
+        if not has_image:
+            if message_to_send:
+                print(f"[FLOW] No image, sending text only: len={len(message_to_send)}")
+                conv_id = dl_post_text(token, conv_id, message_to_send, user_id)
+        
+        # Eğer görsel VARSA, text + görsel birlikte gönder
         sent_image = False
 
         if photo_sizes:
@@ -477,21 +498,27 @@ def lambda_handler(event, context):
             if not content_type:
                 content_type = mimetypes.guess_type(file_path)[0] or "image/jpeg"
             filename = os.path.basename(file_path) or f"photo_{int(time.time())}.jpg"
-            conv_id = dl_upload_image(token, conv_id, filename, content_type, img_bytes, user_id, caption or DEFAULT_PROMPT)
+            
+            # TEXT + GÖRSEL BİRLİKTE
+            instruction = caption or DEFAULT_PROMPT
+            print(f"[FLOW] Sending image WITH instruction: '{instruction}'")
+            conv_id = dl_upload_image(token, conv_id, filename, content_type, img_bytes, user_id, instruction)
             sent_image = True
 
         elif doc and isinstance(doc, dict) and str(doc.get("mime_type","")).startswith("image/"):
             mime = doc.get("mime_type", "")
             print(f"[FLOW] document detected mime={mime}")
-            if mime.startswith("image/"):
-                file_id = doc["file_id"]
-                download_url, file_path = tg_get_file(file_id)
-                img_bytes, content_type = tg_download_file(download_url)
-                if not content_type:
-                    content_type = mimetypes.guess_type(file_path)[0] or "image/jpeg"
-                filename = os.path.basename(file_path) or f"image_{int(time.time())}"
-                conv_id = dl_upload_image(token, conv_id, filename, content_type, img_bytes, user_id, caption)
-                sent_image = True
+            file_id = doc["file_id"]
+            download_url, file_path = tg_get_file(file_id)
+            img_bytes, content_type = tg_download_file(download_url)
+            if not content_type:
+                content_type = mimetypes.guess_type(file_path)[0] or "image/jpeg"
+            filename = os.path.basename(file_path) or f"image_{int(time.time())}"
+            
+            instruction = caption or DEFAULT_PROMPT
+            print(f"[FLOW] Sending document image WITH instruction: '{instruction}'")
+            conv_id = dl_upload_image(token, conv_id, filename, content_type, img_bytes, user_id, instruction)
+            sent_image = True
 
         replies = dl_poll_reply_text_and_attachments(token, conv_id, max_wait_seconds=30)
         if not replies:
