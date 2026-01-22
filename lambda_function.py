@@ -426,6 +426,11 @@ def lambda_handler(event, context):
         return {"statusCode": 400, "body": "invalid json"}
 
     message = (update.get("message") or update.get("edited_message")) or {}
+    
+    # DEBUG: Print complete message structure
+    print(f"[DEBUG] Complete message structure:")
+    print(f"[DEBUG] message = {json.dumps(message, ensure_ascii=False, indent=2)}")
+    
     chat = message.get("chat") or {}
     chat_id = chat.get("id")
     user_id = f"tg-{chat_id}"
