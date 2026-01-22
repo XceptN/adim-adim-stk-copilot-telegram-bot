@@ -63,8 +63,8 @@ def http_post_multipart(url, fields, files, headers=None, timeout=90):
     for name, (content, ctype) in (fields or {}).items():
         if name == "activity":
             add_part({
-                "Content-Disposition": f'form-data; name="{name}"',  # <-- filename yok
-                "Content-Type": ctype or "application/vnd.microsoft.activity+json; charset=utf-8",
+                "Content-Disposition": f'form-data; name="{name}"',  
+                "Content-Type": ctype or "text/plain; charset=utf-8",
             }, content)
         else:
             # Diğer field'lar için önceki davranış korunabilir veya filename kaldırılabilir
@@ -260,11 +260,11 @@ def dl_upload_image(token, conversation_id_unused, filename, content_type, conte
     activity = {
         "type": "message",
         "from": {"id": user_id},
-        "text": text or "" #,
-        #"attachments": [{
-        #    "contentType": content_type,
-        #    "name": filename
-        #}]
+        "text": text or "",
+        "attachments": [{
+            "contentType": content_type,
+            "name": filename
+        }]
     }
     
     activity_json = json.dumps(activity, ensure_ascii=False)
@@ -276,7 +276,7 @@ def dl_upload_image(token, conversation_id_unused, filename, content_type, conte
         "name":"file",
         "filename":filename,
         "content":content_bytes,
-        "content_type":content_type or "application/octet-stream"
+        "content_type":content_type
     }]
     upload_url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/upload?userId={urllib.parse.quote(user_id)}"
     print(f"[DL] upload image conv={conv_id} url={repr(upload_url)} file={filename} ctype={content_type} bytes={len(content_bytes)}")
