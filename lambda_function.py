@@ -60,11 +60,17 @@ def http_post_multipart(url, fields, files, headers=None, timeout=90):
         body_parts.append(b"")
         body_parts.append(content if isinstance(content, (bytes, bytearray)) else content.encode("utf-8"))
 
+    for f in (files or []):
+        add_part({
+            "Content-Disposition": f'form-data; name="{f["name"]}"; filename="{f["filename"]}"',
+            "Content-Type": f.get("content_type") or "application/octet-stream",
+        }, f["content"])
+
     for name, (content, ctype) in (fields or {}).items():
         if name == "activity":
             add_part({
                 "Content-Disposition": f'form-data; name="{name}"',  
-                "Content-Type": ctype or "text/plain; charset=utf-8",
+                "Content-Type": ctype or "application/vnd.microsoft.activity",
             }, content)
         else:
             # Diğer field'lar için önceki davranış korunabilir veya filename kaldırılabilir
@@ -72,13 +78,6 @@ def http_post_multipart(url, fields, files, headers=None, timeout=90):
                 "Content-Disposition": f'form-data; name="{name}"',
                 "Content-Type": ctype or "text/plain; charset=utf-8",
             }, content)
-
-
-    for f in (files or []):
-        add_part({
-            "Content-Disposition": f'form-data; name="{f["name"]}"; filename="{f["filename"]}"',
-            "Content-Type": f.get("content_type") or "application/octet-stream",
-        }, f["content"])
 
     body_parts.append(("--" + boundary + "--").encode())
     data = b"\r\n".join(body_parts)
@@ -260,17 +259,17 @@ def dl_upload_image(token, conversation_id_unused, filename, content_type, conte
     activity = {
         "type": "message",
         "from": {"id": user_id},
-        "text": text or "",
-        "attachments": [{
-            "contentType": content_type,
-            "name": filename
-        }]
+        "text": text or ""#,
+        #"attachments": [{
+        #    "contentType": content_type,
+        #    "name": filename
+        #}]
     }
     
     activity_json = json.dumps(activity, ensure_ascii=False)
 
     fields = {
-            "activity": (activity_json, "application/vnd.microsoft.activity+json; charset=utf-8")
+            "activity": (activity_json, None)
     }
     files  = [{
         "name":"file",
