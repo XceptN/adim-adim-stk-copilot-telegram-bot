@@ -15,12 +15,8 @@ from wsgiref import headers
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 REQUIRE_TG_SECRET  = os.environ.get("REQUIRE_TG_SECRET", "false").lower() == "true"
-DEBUG = os.environ.get("DEBUG", "false").lower() == "true"
+LOGGING = os.environ.get("LOGGING", "error").lower() # debug, info, error
 
-def debug_print(*args, **kwargs):
-    """Print only if DEBUG=true"""
-    if DEBUG:
-        print(*args, **kwargs)
 TELEGRAM_SECRET_TOKEN = os.environ.get("TELEGRAM_SECRET_TOKEN", "")
 DIRECTLINE_SECRET  = os.environ["DIRECTLINE_SECRET"]
 DIRECTLINE_BASE_URL = os.environ.get("DIRECTLINE_BASE_URL", "https://directline.botframework.com")
@@ -35,6 +31,20 @@ DL_MAX_WAIT_SECONDS = float(os.environ.get("DL_MAX_WAIT_SECONDS", "30"))
 DL_INITIAL_POLL_INTERVAL = float(os.environ.get("DL_INITIAL_POLL_INTERVAL", "0.6"))
 DL_BACKOFF_FACTOR = float(os.environ.get("DL_BACKOFF_FACTOR", "1.5"))
 DL_MAX_POLL_INTERVAL = float(os.environ.get("DL_MAX_POLL_INTERVAL", "3.0"))
+
+
+def debug_print(*args, **kwargs):
+    if LOGGING == "debug":
+        print("[DEBUG]", *args, **kwargs)
+
+def info_print(*args, **kwargs):
+    if LOGGING in ("debug", "info"):
+        print("[INFO]", *args, **kwargs)
+
+def error_print(*args, **kwargs):
+    if LOGGING in ("debug", "info", "error"):
+        print("[ERROR]", *args, **kwargs)
+
 
 # -------- Helpers: HTTP --------
 def http_get(url, headers=None, timeout=90):
@@ -580,7 +590,6 @@ def validate_telegram_secret(headers):
 # -------- Lambda Handler --------
 def lambda_handler(event, context):
     t0 = time.time()
-    debug_print("="*80)
     debug_print(f"[INVOKE] time={datetime.utcnow().isoformat()}Z "
           f"func_url=True method={event.get('requestContext',{}).get('http',{}).get('method')} "
           f"path={event.get('rawPath')} isBase64={event.get('isBase64Encoded')}")
@@ -599,7 +608,7 @@ def lambda_handler(event, context):
         update = json.loads(raw)
         debug_print(f"[UPDATE] keys={list(update.keys())}")
     except Exception as ex:
-        debug_print(f"[ERROR] invalid json ex={ex}")
+        error_print(f"invalid json ex={ex}")
         return {"statusCode": 400, "body": "invalid json"}
 
     message = (update.get("message") or update.get("edited_message")) or {}
@@ -765,7 +774,7 @@ def lambda_handler(event, context):
                     tg_send_photo_by_url(chat_id, curl, caption=name, reply_to_message_id=reply_to_id)
 
     except Exception as ex:
-        debug_print(f"[ERROR] flow ex={ex}")
+        error_print(f"flow ex={ex}")
         tg_send_message(chat_id, f"Bir hata oluştu ({ex}). Lütfen tekrar deneyiniz.", reply_to_message_id=reply_to_id)
 
     dt = time.time() - t0
