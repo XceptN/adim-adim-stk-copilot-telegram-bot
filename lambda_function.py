@@ -13,8 +13,6 @@ import random
 from datetime import datetime, timezone
 from wsgiref import headers
 
-from urllib3.util import url
-
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 REQUIRE_TG_SECRET  = os.environ.get("REQUIRE_TG_SECRET", "false").lower() == "true"
 DEBUG = os.environ.get("DEBUG", "false").lower() == "true"
@@ -348,17 +346,9 @@ def dl_post_text(token, conversation_id_unused, text, user_id):
 
     url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/activities"
     debug_print(f"[DL] post text conv={conv_id} url={repr(url)} text_len={len(text)}")
-    debug_print(f"[DL] post text CONTENT: '{text}'")
     body, code, _ = http_post_json(
         url,
-        {
-            "type": "message",
-            "from": {"id": user_id, "name": "TelegramUser", "role": "user"},
-            "text": text,
-            "textFormat": "plain",
-            "locale": "tr-TR",
-            "channelId": "directline"
-        },
+        {"type": "message", "from": {"id": user_id}, "text": text},
         headers
     )
     if code not in (200, 201):
