@@ -345,12 +345,34 @@ def dl_post_text(token, conversation_id_unused, text, user_id):
     debug_print(f"[DL] conversation started id={conv_id}")
 
     url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/activities"
+    
+    # Copilot Studio formatında payload
+    client_activity_id = uuid.uuid4().hex[:12]
+    now = datetime.now(timezone.utc)
+    local_timestamp = now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}+00:00"
+    
+    payload = {
+        "type": "message",
+        "text": text,
+        "textFormat": "plain",
+        "channelId": "webchat",
+        "from": {
+            "id": user_id,
+            "name": "",
+            "role": "user"
+        },
+        "locale": "tr-TR",
+        "localTimestamp": local_timestamp,
+        "localTimezone": "Europe/Istanbul",
+        "channelData": {
+            "clientActivityID": client_activity_id
+        }
+    }
+    
     debug_print(f"[DL] post text conv={conv_id} url={repr(url)} text_len={len(text)}")
-    body, code, _ = http_post_json(
-        url,
-        {"type": "message", "from": {"id": user_id}, "text": text},
-        headers
-    )
+    debug_print(f"[DL] post text CONTENT: '{text}'")
+    
+    body, code, _ = http_post_json(url, payload, headers)
     if code not in (200, 201):
         debug_print(f"[DL][ERR] post text failed status={code} body={body}")
         raise RuntimeError(f"Post activity failed: {code} {body}")
