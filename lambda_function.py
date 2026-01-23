@@ -149,6 +149,7 @@ def tg_send_message(chat_id, text, reply_to_message_id=None):
     debug_print(f"[TG] sendMessage chat_id={chat_id} text_len={len(text)} reply_to={reply_to_message_id}")
     _, code, _ = http_post_json(url, payload)
     debug_print(f"[TG] sendMessage status={code}")
+    info_print(f"[TG] Message sent to user: <{text}>")
     return code == 200
 
 def tg_send_photo_by_url(chat_id, url_or_fileid, caption=None, reply_to_message_id=None):
@@ -595,7 +596,7 @@ def lambda_handler(event, context):
           f"path={event.get('rawPath')} isBase64={event.get('isBase64Encoded')}")
     headers = { (k.lower() if isinstance(k,str) else k): v for k,v in (event.get("headers") or {}).items() }
     if not validate_telegram_secret(headers):
-        debug_print("[INVOKE] unauthorized (secret mismatch)")
+        error_print("[INVOKE] unauthorized (secret mismatch)")
         return {"statusCode": 401, "body": "unauthorized"}
 
     raw = event.get("body") or "{}"
@@ -665,6 +666,11 @@ def lambda_handler(event, context):
 
     caption = message.get("caption")
     text = message.get("text")
+    first_name = message.get('from', {}).get('first_name', 'there')
+    last_name = message.get('from', {}).get('last_name', '')
+    full_name = f"{first_name} {last_name}".strip()
+
+    info_print(f"[TG] User <{full_name}> said: <{text}>")
 
     # Desteklenen içerik türlerini kontrol et
     photo_sizes = message.get("photo") or []
