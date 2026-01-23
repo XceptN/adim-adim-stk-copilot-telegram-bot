@@ -670,8 +670,6 @@ def lambda_handler(event, context):
     last_name = message.get('from', {}).get('last_name', '')
     full_name = f"{first_name} {last_name}".strip()
 
-    info_print(f"[TG] User <{full_name}> said: <{text}>")
-
     # Desteklenen içerik türlerini kontrol et
     photo_sizes = message.get("photo") or []
     doc = message.get("document")
@@ -719,7 +717,9 @@ def lambda_handler(event, context):
         token, conv_id = dl_get_token_and_conversation_via_secret()
 
         message_to_send = text or caption
-        
+
+        info_print(f"[TG] User <{full_name}> said: <{message_to_send}>")
+
         # Eğer görsel YOKSA, sadece text gönder
         if not has_image:
             if message_to_send:
