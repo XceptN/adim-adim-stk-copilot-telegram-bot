@@ -13,6 +13,8 @@ import random
 from datetime import datetime, timezone
 from wsgiref import headers
 
+from urllib3.util import url
+
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 REQUIRE_TG_SECRET  = os.environ.get("REQUIRE_TG_SECRET", "false").lower() == "true"
 DEBUG = os.environ.get("DEBUG", "false").lower() == "true"
@@ -37,7 +39,7 @@ DL_BACKOFF_FACTOR = float(os.environ.get("DL_BACKOFF_FACTOR", "1.5"))
 DL_MAX_POLL_INTERVAL = float(os.environ.get("DL_MAX_POLL_INTERVAL", "3.0"))
 
 # -------- Helpers: HTTP --------
-def http_get(url, headers=None, timeout=15):
+def http_get(url, headers=None, timeout=90):
     debug_print(f"[HTTP][GET] url={url} headers={_redact_headers(headers)} timeout={timeout}")
     req = urllib.request.Request(url, headers=headers or {}, method="GET")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -51,7 +53,7 @@ def http_get_json(url, headers=None, timeout=90):
         h["Accept"] = "application/json"
     return http_get(url, headers=h, timeout=timeout)
 
-def http_post_json(url, payload, headers=None, timeout=20):
+def http_post_json(url, payload, headers=None, timeout=90):
     h = {"Content-Type": "application/json"}
     if headers:
         h.update(headers)
@@ -169,7 +171,7 @@ def tg_get_file(file_id):
 
 def tg_download_file(download_url):
     debug_print(f"[TG] download file url={download_url}")
-    body, code, headers = http_get(download_url, timeout=60)
+    body, code, headers = http_get(download_url, timeout=90)
     if code != 200:
         raise RuntimeError(f"download failed: {code}")
     content_type = headers.get("Content-Type")
@@ -346,9 +348,17 @@ def dl_post_text(token, conversation_id_unused, text, user_id):
 
     url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/activities"
     debug_print(f"[DL] post text conv={conv_id} url={repr(url)} text_len={len(text)}")
+    debug_print(f"[DL] post text CONTENT: '{text}'")
     body, code, _ = http_post_json(
         url,
-        {"type": "message", "from": {"id": user_id}, "text": text},
+        {
+            "type": "message",
+            "from": {"id": user_id, "name": "TelegramUser", "role": "user"},
+            "text": text,
+            "textFormat": "plain",
+            "locale": "tr-TR",
+            "channelId": "directline"
+        },
         headers
     )
     if code not in (200, 201):
@@ -512,7 +522,7 @@ def dl_poll_reply_text_and_attachments(token, conversation_id,
     while time.time() < deadline:
         attempt += 1
         q = f"?watermark={urllib.parse.quote(watermark)}" if watermark else ""
-        body, code, _ = http_get(url + q, headers, timeout=20)
+        body, code, _ = http_get(url + q, headers, timeout=90)
         if code != 200:
             debug_print(f"[DL] poll http status={code} (attempt={attempt}) -> stop polling")
             break
