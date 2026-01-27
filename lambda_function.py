@@ -1,5 +1,4 @@
-# lambda_function.py  -- verbose logging (print) enabled
-# v9: Added group @mention support with privacy mode ON
+# lambda_function.py
 import base64
 import json
 import mimetypes
@@ -357,7 +356,7 @@ def dl_post_text(token, conversation_id_unused, text, user_id):
 
     url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/activities"
     
-    # Copilot Studio formatında payload
+    # Payload in Copilot Studio format
     client_activity_id = uuid.uuid4().hex[:12]
     now = datetime.now(timezone.utc)
     local_timestamp = now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}+00:00"
@@ -392,12 +391,12 @@ def dl_post_text(token, conversation_id_unused, text, user_id):
 
 def dl_upload_image(token, conversation_id_unused, filename, content_type, content_bytes, user_id, text):
     """
-    Copilot Studio format ile görsel upload.
-    Activity içinde thumbnailUrl, channelData ve diğer metadata'lar var.
+    Image upload in Copilot Studio format
+    We have thumbnailUrl, channelData and other metadata in activity.
     """
     headers = {"Authorization": f"Bearer {token}"}
     
-    # 1) Konuşmayı AÇ
+    # 1) Open conversation
     debug_print("[DL] start conversation (always) for upload")
     b_start, c_start, _ = http_post_json(f"{DIRECTLINE_BASE_URL}/v3/directline/conversations", {}, headers)
     if c_start not in (200, 201):
@@ -406,7 +405,7 @@ def dl_upload_image(token, conversation_id_unused, filename, content_type, conte
     conv_id = json.loads(b_start.decode())["conversationId"]
     debug_print(f"[DL] conversation started id={conv_id}")
     
-    # 2) Text temizle
+    # 2) Cleanup Text
     if not text or text.strip() == "":
         text = DEFAULT_PROMPT
     text = text.strip()
@@ -418,13 +417,13 @@ def dl_upload_image(token, conversation_id_unused, filename, content_type, conte
     debug_print(f"[DL] Text: {text}")
     debug_print(f"[DL] Image: filename={filename}, content_type={content_type}, size={len(content_bytes)} bytes")
     
-    # 3) Content-Type kontrolü
+    # 3) Control Content-Type
     if not content_type or content_type == "application/octet-stream":
         guessed = mimetypes.guess_type(filename)[0]
         content_type = guessed or "image/jpeg"
         debug_print(f"[DL] Adjusted content_type to: {content_type}")
     
-    # 4) Thumbnail oluştur (base64)
+    # 4) Create Thumbnail (base64)
     thumbnail_b64 = base64.b64encode(content_bytes).decode('ascii')
     thumbnail_url = f"data:{content_type};base64,{thumbnail_b64}"
     
@@ -432,7 +431,7 @@ def dl_upload_image(token, conversation_id_unused, filename, content_type, conte
     now = datetime.now(timezone.utc)
     local_timestamp = now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}+00:00"
     
-    # 6) Activity JSON - Copilot Studio formatı
+    # 6) Activity JSON - Copilot Studio format
     client_activity_id = uuid.uuid4().hex[:12]
     
     activity = {
@@ -468,7 +467,7 @@ def dl_upload_image(token, conversation_id_unused, filename, content_type, conte
     upload_url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/upload?userId={urllib.parse.quote(user_id)}"
     debug_print(f"[DL] upload URL: {upload_url}")
     
-    # 8) Copilot format ile upload
+    # 8) Upload with Copilot format
     b_up, c_up, h_up = http_post_multipart_copilot(
         upload_url,
         activity_json,
@@ -482,7 +481,7 @@ def dl_upload_image(token, conversation_id_unused, filename, content_type, conte
     if c_up in (200, 201):
         debug_print(f"[DL] upload SUCCESS! status={c_up}")
         
-        # Doğrulama
+        # Verification
         time.sleep(0.5)
         b_act, c_act, _ = http_get_json(
             f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/activities",
@@ -648,7 +647,7 @@ def lambda_handler(event, context):
     
     uid = str(message.get('from', {}).get('id', ''))
     
-    # Handle /start command
+    # Handle /bot command
     text = message.get('text', '')
     if text and (text.startswith('/bot') or text.startswith(f'/bot@{TELEGRAM_BOT_USERNAME}')):
         user_name = message.get('from', {}).get('first_name', '')
@@ -666,18 +665,18 @@ def lambda_handler(event, context):
 
     caption = message.get("caption")
     text = message.get("text")
-    first_name = message.get('from', {}).get('first_name', 'there')
+    first_name = message.get('from', {}).get('first_name', 'İsimsiz')
     last_name = message.get('from', {}).get('last_name', '')
     full_name = f"{first_name} {last_name}".strip()
 
-    # Desteklenen içerik türlerini kontrol et
+    # Check for supported content types
     photo_sizes = message.get("photo") or []
     doc = message.get("document")
     is_image_doc = doc and isinstance(doc, dict) and str(doc.get("mime_type","")).startswith("image/")
     has_image = bool(photo_sizes) or is_image_doc
     has_text = bool(text)
 
-    # Desteklenmeyen içerik türleri kontrolü
+    # Check for unsupported content types
     unsupported_content = (
         message.get("video") or
         message.get("audio") or
@@ -691,7 +690,7 @@ def lambda_handler(event, context):
         message.get("poll") or
         message.get("dice") or
         message.get("game") or
-        (doc and not is_image_doc)  # Resim olmayan dökümanlar
+        (doc and not is_image_doc)  # Non-image documents
     )
 
     if unsupported_content:
@@ -720,13 +719,13 @@ def lambda_handler(event, context):
 
         info_print(f"[TG] User <{full_name}> said: <{message_to_send}>")
 
-        # Eğer görsel YOKSA, sadece text gönder
+        # If no image, send text only
         if not has_image:
             if message_to_send:
                 debug_print(f"[FLOW] No image, sending text only: len={len(message_to_send)}")
                 conv_id = dl_post_text(token, conv_id, message_to_send, user_id)
         
-        # Eğer görsel VARSA, Copilot format ile gönder
+        # If image present, send in Copilot format
         sent_image = False
 
         if photo_sizes:
