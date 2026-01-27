@@ -650,11 +650,11 @@ def lambda_handler(event, context):
     
     # Handle /start command
     text = message.get('text', '')
-    if text and (text.startswith('/start') or text.startswith(f'/start@{TELEGRAM_BOT_USERNAME}')):
-        user_name = message.get('from', {}).get('first_name', 'there')
+    if text and (text.startswith('/bot') or text.startswith(f'/bot@{TELEGRAM_BOT_USERNAME}')):
+        user_name = message.get('from', {}).get('first_name', '')
         welcome_text = (
             f"Merhaba {user_name}! 👋\n\n"
-            "Ben Adım Adım STK yardımcınızım. Bana metin mesajları veya resim gönderebilirsiniz.\n\n"
+            "Ben Adım Adım STK yardımcınızım. Bana metin mesajı veya resim gönderebilirsiniz.\n\n"
             "Size nasıl yardımcı olabilirim?"
         )
         tg_send_message(chat_id, welcome_text, reply_to_message_id=reply_to_id)
