@@ -759,7 +759,8 @@ def lambda_handler(event, context):
 
         replies = dl_poll_reply_text_and_attachments(token, conv_id, max_wait_seconds=30)
         if not replies:
-            msg = "Güncel yanıt bulunamadı, lütfen tekrar deneyin." if not sent_image else \
+            error_print(f"Cannot find actual reply from Copilot backend")
+            msg = "Arka uçtan yanıt alınamadı. Lütfen daha sonra tekrar deneyiniz." if not sent_image else \
                   "Görsel alındı, yanıt hazırlanıyor."
             tg_send_message(chat_id, msg, reply_to_message_id=reply_to_id)
             dt = time.time() - t0
