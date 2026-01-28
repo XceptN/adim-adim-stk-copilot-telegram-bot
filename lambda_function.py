@@ -757,7 +757,7 @@ def lambda_handler(event, context):
             conv_id = dl_upload_image(token, conv_id, filename, content_type, img_bytes, user_id, instruction)
             sent_image = True
 
-        replies = dl_poll_reply_text_and_attachments(token, conv_id, max_wait_seconds=30)
+        replies = dl_poll_reply_text_and_attachments(token, conv_id, max_wait_seconds=DL_MAX_WAIT_SECONDS)
         if not replies:
             error_print(f"Cannot find actual reply from Copilot backend")
             msg = "Arka uçtan yanıt alınamadı. Lütfen daha sonra tekrar deneyiniz." if not sent_image else \
