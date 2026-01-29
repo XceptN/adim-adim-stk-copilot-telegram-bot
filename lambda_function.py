@@ -613,8 +613,8 @@ def lambda_handler(event, context):
 
     message = (update.get("message") or update.get("edited_message")) or {}
     
-    debug_print(f"[DEBUG] Complete message structure:")
-    debug_print(f"[DEBUG] message = {json.dumps(message, ensure_ascii=False, indent=2)}")
+    debug_print(f"Complete message structure:")
+    debug_print(f"message = {json.dumps(message, ensure_ascii=False, indent=2)}")
     
     chat = message.get("chat") or {}
     chat_id = chat.get("id")
