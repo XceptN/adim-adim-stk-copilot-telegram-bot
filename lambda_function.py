@@ -1,4 +1,6 @@
-# lambda_function.py
+# lambda_function.py for Adım Adım STK Telegram Bot with Copilot Studio integration
+# Author: Özgür Yüksel
+
 import base64
 import json
 import mimetypes
