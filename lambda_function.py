@@ -18,7 +18,7 @@ LOGGING = os.environ.get("LOGGING", "error").lower() # debug, info, error
 
 TELEGRAM_SECRET_TOKEN = os.environ.get("TELEGRAM_SECRET_TOKEN", "")
 DIRECTLINE_SECRET  = os.environ["DIRECTLINE_SECRET"]
-DIRECTLINE_BASE_URL = os.environ.get("DIRECTLINE_BASE_URL", "https://directline.botframework.com")
+DIRECTLINE_BASE_URL = os.environ.get("DIRECTLINE_BASE_URL", "https://europe.directline.botframework.com")
 DEFAULT_PROMPT = os.environ.get("DEFAULT_PROMPT", "Bu ekran görüntüsündeki problemi nasıl çözebilirim?")
 
 # Bot username (without @) - needed for group mention detection
