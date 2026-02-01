@@ -22,6 +22,7 @@ TELEGRAM_SECRET_TOKEN = os.environ.get("TELEGRAM_SECRET_TOKEN", "")
 DIRECTLINE_SECRET  = os.environ["DIRECTLINE_SECRET"]
 DIRECTLINE_BASE_URL = os.environ.get("DIRECTLINE_BASE_URL", "https://europe.directline.botframework.com")
 DEFAULT_PROMPT = os.environ.get("DEFAULT_PROMPT", "Bu ekran görüntüsündeki problemi nasıl çözebilirim?")
+AI_DISCLAIMER = os.environ.get("AI_DISCLAIMER")
 
 # Bot username (without @) - needed for group mention detection
 # Set this in Lambda environment variables, e.g., "AdimAdimSTKBot"
@@ -772,7 +773,7 @@ def lambda_handler(event, context):
         for idx, r in enumerate(replies, 1):
             debug_print(f"[REPLY] #{idx} text_len={len(r.get('text') or '')} atts={len(r.get('attachments') or [])}")
             if r.get("text"):
-                tg_send_message(chat_id, r["text"], reply_to_message_id=reply_to_id)
+                tg_send_message(chat_id, r["text"] + AI_DISCLAIMER, reply_to_message_id=reply_to_id)
             for a in (r.get("attachments") or []):
                 curl = a.get("contentUrl")
                 ctype = a.get("contentType", "")
