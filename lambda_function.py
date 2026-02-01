@@ -773,8 +773,9 @@ def lambda_handler(event, context):
         for idx, r in enumerate(replies, 1):
             debug_print(f"[REPLY] #{idx} text_len={len(r.get('text') or '')} atts={len(r.get('attachments') or [])}")
             if r.get("text"):
-                tg_send_message(chat_id, r["text"] + AI_DISCLAIMER, reply_to_message_id=reply_to_id)
-            for a in (r.get("attachments") or []):
+                disclaimer_suffix = f"\n\n{AI_DISCLAIMER}" if AI_DISCLAIMER else ""
+                tg_send_message(chat_id, r["text"] + disclaimer_suffix, reply_to_message_id=reply_to_id)
+                a in (r.get("attachments") or []):
                 curl = a.get("contentUrl")
                 ctype = a.get("contentType", "")
                 name = a.get("name") or ""
