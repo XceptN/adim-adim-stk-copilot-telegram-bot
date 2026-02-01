@@ -148,7 +148,7 @@ def tg_send_message(chat_id, text, reply_to_message_id=None):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
     # Try with Markdown
-    formatted_text = text.replace('**', '*')
+    formatted_text = text.replace('**', '*').replace('__', '_')
     payload = {"chat_id": chat_id, "text": formatted_text, "parse_mode": "Markdown"}
     if reply_to_message_id:
         payload["reply_to_message_id"] = reply_to_message_id
@@ -661,7 +661,7 @@ def lambda_handler(event, context):
         welcome_text = (
             f"Merhaba {user_name}! 👋\n\n"
             "Ben Adım Adım STK yardımcınızım. Bana metin mesajı veya resim gönderebilirsiniz.\n\n"
-            "Size nasıl yardımcı olabilirim?"
+            "*Size nasıl yardımcı olabilirim?*"
         )
         tg_send_message(chat_id, welcome_text, reply_to_message_id=reply_to_id)
             
@@ -777,7 +777,7 @@ def lambda_handler(event, context):
         for idx, r in enumerate(replies, 1):
             debug_print(f"[REPLY] #{idx} text_len={len(r.get('text') or '')} atts={len(r.get('attachments') or [])}")
             if r.get("text"):
-                disclaimer_suffix = f"\n\n__{AI_DISCLAIMER}__" if AI_DISCLAIMER else ""
+                disclaimer_suffix = f"\n\n_{AI_DISCLAIMER}_" if AI_DISCLAIMER else ""
                 tg_send_message(chat_id, r["text"] + disclaimer_suffix, reply_to_message_id=reply_to_id)
             for a in (r.get("attachments") or []):
                 curl = a.get("contentUrl")
