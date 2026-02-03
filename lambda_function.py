@@ -526,6 +526,105 @@ def dl_upload_image(token, conversation_id_unused, filename, content_type, conte
     debug_print(f"[DL][ERR] upload failed status={c_up} body={b_up}")
     raise RuntimeError(f"Upload failed: {c_up} {b_up}")
 
+
+def extract_error_message_from_activity(activity):
+    """
+    Extract comprehensive error message from Copilot Studio activity.
+    
+    Copilot Studio sends error details in various places:
+    - channelData.pva:error (for ContentFiltered and other errors)
+    - channelData.error
+    - value (for event activities)
+    - entities with error type
+    
+    Returns a tuple: (error_code, error_message) or (None, None) if no error
+    """
+    channel_data = activity.get("channelData", {})
+    
+    # Check for PVA (Power Virtual Agents / Copilot Studio) specific errors
+    pva_data = channel_data.get("pva", {})
+    if pva_data:
+        error_info = pva_data.get("error", {})
+        if error_info:
+            error_code = error_info.get("code", "")
+            error_message = error_info.get("message", "")
+            debug_print(f"[DL] Found PVA error: code={error_code}, message={error_message}")
+            return error_code, error_message
+    
+    # Check for direct error in channelData
+    if "error" in channel_data:
+        error_info = channel_data["error"]
+        if isinstance(error_info, dict):
+            error_code = error_info.get("code", "")
+            error_message = error_info.get("message", "")
+            return error_code, error_message
+        elif isinstance(error_info, str):
+            return None, error_info
+    
+    # Check for ContentFiltered specifically in various locations
+    # Sometimes it's in the activity value for event type activities
+    if activity.get("type") == "event":
+        value = activity.get("value", {})
+        if isinstance(value, dict):
+            if "error" in value:
+                error_info = value["error"]
+                if isinstance(error_info, dict):
+                    return error_info.get("code"), error_info.get("message")
+    
+    # Check entities for error information
+    entities = activity.get("entities", [])
+    for entity in entities:
+        if entity.get("type") == "error" or "error" in entity:
+            error_data = entity.get("error", entity)
+            if isinstance(error_data, dict):
+                return error_data.get("code"), error_data.get("message")
+    
+    # Check for error in suggestedActions (sometimes errors come with suggestions)
+    suggested_actions = activity.get("suggestedActions", {})
+    if suggested_actions:
+        actions = suggested_actions.get("actions", [])
+        for action in actions:
+            if "error" in str(action).lower():
+                debug_print(f"[DL] Found error indication in suggestedActions: {action}")
+    
+    return None, None
+
+
+def format_error_for_telegram(error_code, error_message, conversation_id):
+    """
+    Format a comprehensive error message for Telegram users,
+    similar to what Copilot Studio shows in its test interface.
+    """
+    now = datetime.now(timezone.utc)
+    timestamp = now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
+    
+    # Map error codes to user-friendly Turkish messages
+    error_descriptions = {
+        "ContentFiltered": "İçerik, Sorumlu Yapay Zeka kısıtlamaları nedeniyle filtrelendi.",
+        "RateLimited": "Çok fazla istek gönderildi. Lütfen biraz bekleyip tekrar deneyin.",
+        "ServiceUnavailable": "Servis geçici olarak kullanılamıyor.",
+        "Timeout": "İstek zaman aşımına uğradı.",
+        "InvalidRequest": "Geçersiz istek.",
+    }
+    
+    # Get description for the error code, or use the original message
+    description = error_descriptions.get(error_code, error_message) if error_code else error_message
+    
+    # Build comprehensive error message
+    parts = []
+    
+    if description:
+        parts.append(f"*Hata Mesajı:* {description}")
+    
+    if error_code:
+        parts.append(f"*Hata Kodu:* {error_code}")
+    
+    parts.append(f"*Conversation Id:* {conversation_id}")
+    parts.append(f"*Zaman (UTC):* {timestamp}")
+    
+    return "\n".join(parts)
+
+
 def dl_poll_reply_text_and_attachments(token, conversation_id,
                                        max_wait_seconds=None,
                                        initial_interval=None,
@@ -562,11 +661,47 @@ def dl_poll_reply_text_and_attachments(token, conversation_id,
         debug_print(f"[DL] poll got activities={len(activities)} watermark={watermark} attempt={attempt}")
 
         for act in activities:
-            if act.get("type") == "message" and not act.get("from", {}).get("id", "").startswith(user_id_prefix):
+            # Log the full activity for debugging
+            debug_print(f"[DL] Activity: type={act.get('type')} from={act.get('from', {}).get('id', 'unknown')}")
+            debug_print(f"[DL] Activity channelData: {json.dumps(act.get('channelData', {}), ensure_ascii=False)[:500]}")
+            
+            # Check if this is a bot message (not from user)
+            from_id = act.get("from", {}).get("id", "")
+            is_from_user = from_id.startswith(user_id_prefix)
+            
+            if act.get("type") == "message" and not is_from_user:
                 text = act.get("text")
                 atts = act.get("attachments") or []
-                debug_print(f"[DL] bot message text_len={len(text or '')} attachments={len(atts)}")
-                replies.append({"text": text, "attachments": atts})
+                
+                # *** NEW: Extract error information ***
+                error_code, error_message = extract_error_message_from_activity(act)
+                
+                debug_print(f"[DL] bot message text_len={len(text or '')} attachments={len(atts)} error_code={error_code}")
+                
+                reply_data = {
+                    "text": text, 
+                    "attachments": atts,
+                    "error_code": error_code,
+                    "error_message": error_message,
+                    "conversation_id": conversation_id,
+                    "channel_data": act.get("channelData", {})  # Include full channelData for debugging
+                }
+                replies.append(reply_data)
+            
+            # Also check for event activities that might contain errors
+            elif act.get("type") == "event" and not is_from_user:
+                error_code, error_message = extract_error_message_from_activity(act)
+                if error_code or error_message:
+                    debug_print(f"[DL] Found error in event activity: code={error_code}, message={error_message}")
+                    reply_data = {
+                        "text": None,
+                        "attachments": [],
+                        "error_code": error_code,
+                        "error_message": error_message,
+                        "conversation_id": conversation_id,
+                        "channel_data": act.get("channelData", {})
+                    }
+                    replies.append(reply_data)
 
         if replies:
             debug_print(f"[DL] poll done replies={len(replies)} in_attempts={attempt}")
@@ -775,10 +910,24 @@ def lambda_handler(event, context):
             return {"statusCode": 200, "body": "ok"}
 
         for idx, r in enumerate(replies, 1):
-            debug_print(f"[REPLY] #{idx} text_len={len(r.get('text') or '')} atts={len(r.get('attachments') or [])}")
-            if r.get("text"):
+            debug_print(f"[REPLY] #{idx} text_len={len(r.get('text') or '')} atts={len(r.get('attachments') or [])} error_code={r.get('error_code')}")
+            
+            # *** NEW: Check for error and format comprehensive message ***
+            error_code = r.get("error_code")
+            error_message = r.get("error_message")
+            
+            if error_code or error_message:
+                # Format comprehensive error message like Copilot Studio does
+                formatted_error = format_error_for_telegram(
+                    error_code, 
+                    error_message, 
+                    r.get("conversation_id", conv_id)
+                )
+                tg_send_message(chat_id, formatted_error, reply_to_message_id=reply_to_id)
+            elif r.get("text"):
                 disclaimer_suffix = f"\n\n_{AI_DISCLAIMER}_" if AI_DISCLAIMER else ""
                 tg_send_message(chat_id, r["text"] + disclaimer_suffix, reply_to_message_id=reply_to_id)
+            
             for a in (r.get("attachments") or []):
                 curl = a.get("contentUrl")
                 ctype = a.get("contentType", "")
