@@ -536,6 +536,7 @@ def extract_error_message_from_activity(activity):
     - channelData.error
     - value (for event activities)
     - entities with error type
+    - OR as plain text in the message body (most common case!)
     
     Returns a tuple: (error_code, error_message) or (None, None) if no error
     """
@@ -590,21 +591,98 @@ def extract_error_message_from_activity(activity):
     return None, None
 
 
-def format_error_for_telegram(error_code, error_message, conversation_id):
+def parse_error_from_text(text):
+    """
+    Parse error information from the message text itself.
+    
+    Copilot Studio often sends errors as plain text in this format:
+    "Bir hata gerçekleşti.
+    Hata kodu: ContentFiltered
+    Conversation Id: xxx
+    Zaman (UTC): xxx"
+    
+    Returns a dict with parsed error info, or None if not an error message.
+    """
+    if not text:
+        return None
+    
+    # Check if this looks like an error message
+    error_indicators = [
+        "hata gerçekleşti",
+        "hata kodu:",
+        "error occurred",
+        "error code:",
+        "ContentFiltered",
+        "RateLimited",
+        "ServiceUnavailable"
+    ]
+    
+    text_lower = text.lower()
+    is_error = any(indicator.lower() in text_lower for indicator in error_indicators)
+    
+    if not is_error:
+        return None
+    
+    debug_print(f"[PARSE] Detected error message in text, parsing...")
+    
+    result = {
+        "error_code": None,
+        "conversation_id": None,
+        "timestamp": None
+    }
+    
+    # Parse each line
+    lines = text.strip().split('\n')
+    for line in lines:
+        line = line.strip()
+        line_lower = line.lower()
+        
+        # Parse error code
+        if "hata kodu:" in line_lower or "error code:" in line_lower:
+            parts = line.split(':', 1)
+            if len(parts) > 1:
+                result["error_code"] = parts[1].strip()
+                debug_print(f"[PARSE] Found error_code: {result['error_code']}")
+        
+        # Parse conversation ID
+        elif "conversation id:" in line_lower:
+            parts = line.split(':', 1)
+            if len(parts) > 1:
+                result["conversation_id"] = parts[1].strip()
+                debug_print(f"[PARSE] Found conversation_id: {result['conversation_id']}")
+        
+        # Parse timestamp
+        elif "zaman (utc):" in line_lower or "time (utc):" in line_lower:
+            parts = line.split(':', 1)
+            if len(parts) > 1:
+                result["timestamp"] = parts[1].strip()
+                debug_print(f"[PARSE] Found timestamp: {result['timestamp']}")
+    
+    return result if result["error_code"] else None
+
+
+def format_error_for_telegram(error_code, error_message, conversation_id, timestamp=None):
     """
     Format a comprehensive error message for Telegram users,
     similar to what Copilot Studio shows in its test interface.
     """
-    now = datetime.now(timezone.utc)
-    timestamp = now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
+    if not timestamp:
+        now = datetime.now(timezone.utc)
+        timestamp = now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
     
-    # Map error codes to user-friendly Turkish messages
+    # Map error codes to user-friendly Turkish messages (matching Copilot Studio's messages)
     error_descriptions = {
-        "ContentFiltered": "İçerik, Sorumlu Yapay Zeka kısıtlamaları nedeniyle filtrelendi.",
+        "ContentFiltered": "İçerik, Sorumlu Yapay Zeka kısıtlamaları nedeniyle engellendi.",
         "RateLimited": "Çok fazla istek gönderildi. Lütfen biraz bekleyip tekrar deneyin.",
         "ServiceUnavailable": "Servis geçici olarak kullanılamıyor.",
         "Timeout": "İstek zaman aşımına uğradı.",
         "InvalidRequest": "Geçersiz istek.",
+        "InternalServerError": "Dahili sunucu hatası oluştu.",
+        "BadGateway": "Ağ geçidi hatası.",
+        "GatewayTimeout": "Ağ geçidi zaman aşımı.",
+        "TooManyRequests": "Çok fazla istek gönderildi. Lütfen bekleyin.",
+        "Unauthorized": "Yetkilendirme hatası.",
+        "Forbidden": "Erişim reddedildi.",
     }
     
     # Get description for the error code, or use the original message
@@ -623,6 +701,32 @@ def format_error_for_telegram(error_code, error_message, conversation_id):
     parts.append(f"*Zaman (UTC):* {timestamp}")
     
     return "\n".join(parts)
+
+
+def enrich_error_text(original_text, conversation_id):
+    """
+    Take the original error text from Copilot and enrich it with
+    the detailed error message description.
+    
+    Input text format:
+    "Bir hata gerçekleşti.
+    Hata kodu: ContentFiltered
+    Conversation Id: xxx
+    Zaman (UTC): xxx"
+    
+    Output adds the detailed description like Copilot Studio test interface.
+    """
+    parsed = parse_error_from_text(original_text)
+    
+    if not parsed:
+        return None  # Not an error message
+    
+    error_code = parsed.get("error_code")
+    conv_id = parsed.get("conversation_id") or conversation_id
+    timestamp = parsed.get("timestamp")
+    
+    # Format with the enriched description
+    return format_error_for_telegram(error_code, None, conv_id, timestamp)
 
 
 def dl_poll_reply_text_and_attachments(token, conversation_id,
@@ -912,7 +1016,9 @@ def lambda_handler(event, context):
         for idx, r in enumerate(replies, 1):
             debug_print(f"[REPLY] #{idx} text_len={len(r.get('text') or '')} atts={len(r.get('attachments') or [])} error_code={r.get('error_code')}")
             
-            # *** NEW: Check for error and format comprehensive message ***
+            reply_text = r.get("text")
+            
+            # *** Check for error in channelData first ***
             error_code = r.get("error_code")
             error_message = r.get("error_message")
             
@@ -924,9 +1030,18 @@ def lambda_handler(event, context):
                     r.get("conversation_id", conv_id)
                 )
                 tg_send_message(chat_id, formatted_error, reply_to_message_id=reply_to_id)
-            elif r.get("text"):
-                disclaimer_suffix = f"\n\n_{AI_DISCLAIMER}_" if AI_DISCLAIMER else ""
-                tg_send_message(chat_id, r["text"] + disclaimer_suffix, reply_to_message_id=reply_to_id)
+            elif reply_text:
+                # *** NEW: Check if the text itself contains an error message ***
+                enriched_error = enrich_error_text(reply_text, conv_id)
+                
+                if enriched_error:
+                    # This was an error message - send the enriched version
+                    debug_print(f"[REPLY] Detected error in text, sending enriched version")
+                    tg_send_message(chat_id, enriched_error, reply_to_message_id=reply_to_id)
+                else:
+                    # Normal message - send as-is with disclaimer
+                    disclaimer_suffix = f"\n\n_{AI_DISCLAIMER}_" if AI_DISCLAIMER else ""
+                    tg_send_message(chat_id, reply_text + disclaimer_suffix, reply_to_message_id=reply_to_id)
             
             for a in (r.get("attachments") or []):
                 curl = a.get("contentUrl")
