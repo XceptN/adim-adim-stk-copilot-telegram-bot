@@ -898,8 +898,14 @@ def lambda_handler(event, context):
     if text and (text.startswith('/bot') or text.startswith(f'/bot@{TELEGRAM_BOT_USERNAME}')):
         user_name = message.get('from', {}).get('first_name', '')
         welcome_text = (
-            f"Merhaba {user_name}! 👋\n\n"
-            "Ben Adım Adım STK yardımcınızım. Bana metin mesajı veya resim gönderebilirsiniz.\n\n"
+            f"Merhaba {user_name}! 👋. Aramıza Hoş Geldiniz! ✨\n"
+            "Bu hesap, İPK platformuna dair sorularınızı Yapay Zeka desteğiyle anında yanıtlamak için kurulmuştur. Dayanışma ekosistemimizin verimliliği için lütfen aşağıdaki kurallarımızı dikkate alın:\n"
+            "- 🤖 Sorular / Cevaplar: Burada bir bot ile konuşuyorsunuz. Sorularınızı net ve yardımseverlik koşusu odaklı sormanız en doğru cevabı almanızı sağlar.⚠️\n"
+            "- Bana metin mesajı 📝 veya resim 🖼 gönderebilirsiniz.\n"
+            "- Sorumlu Kullanım: Bu asistan sadece kurumsal amaçlar için buradadır. Lütfen sistemi denemek, şaka yapmak veya asistanla oyun oynamak gibi topluluğun zamanını alacak eylemlerden kaçının.\n"
+            "- 🔍 Teyit Edin: Yanıtlar yapay zeka tarafından üretildiği için hatalı bilgi içerebilir. Kritik işlemlerde lütfen teyit almadan ilerlemeyin.\n"
+            "- 📩 Teknik Destek: Botun yanıt veremediği veya sistemsel bir sorun yaşadığınız durumlarda muhatabınız: iyilikpesindekos@adimadim.org\n\n"
+            "_Unutmayın, her bir gereksiz sorgu, gerçekten yardıma ihtiyacı olan bir başka STK’nın süresinden çalmaktadır. Hassasiyetiniz için teşekkürler._\n\n"
             "*Size nasıl yardımcı olabilirim?*"
         )
         tg_send_message(chat_id, welcome_text, reply_to_message_id=reply_to_id)
