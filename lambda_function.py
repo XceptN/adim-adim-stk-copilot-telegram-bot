@@ -898,7 +898,7 @@ def lambda_handler(event, context):
     if text and (text.startswith('/bot') or text.startswith(f'/bot@{TELEGRAM_BOT_USERNAME}')):
         user_name = message.get('from', {}).get('first_name', '')
         welcome_text = (
-            f"Merhaba {user_name}! 👋. Aramıza Hoş Geldiniz! ✨\n"
+            f"Merhaba {user_name}! 👋. Aramıza Hoş Geldiniz! ✨\n\n"
             "Bu hesap, İPK platformuna dair sorularınızı Yapay Zeka desteğiyle anında yanıtlamak için kurulmuştur. Dayanışma ekosistemimizin verimliliği için lütfen aşağıdaki kurallarımızı dikkate alın:\n"
             "- 🤖 Sorular / Cevaplar: Burada bir bot ile konuşuyorsunuz. Sorularınızı net ve yardımseverlik koşusu odaklı sormanız en doğru cevabı almanızı sağlar.⚠️\n"
             "- Bana metin mesajı 📝 veya resim 🖼 gönderebilirsiniz.\n"
