@@ -777,7 +777,7 @@ def dl_poll_reply_text_and_attachments(token, conversation_id,
                 text = act.get("text")
                 atts = act.get("attachments") or []
                 
-                # *** NEW: Extract error information ***
+                # Extract error information
                 error_code, error_message = extract_error_message_from_activity(act)
                 
                 debug_print(f"[DL] bot message text_len={len(text or '')} attachments={len(atts)} error_code={error_code}")
@@ -1025,7 +1025,7 @@ def lambda_handler(event, context):
             
             reply_text = r.get("text")
             
-            # *** Check for error in channelData first ***
+            # Check for error in channelData first
             error_code = r.get("error_code")
             error_message = r.get("error_message")
             
@@ -1038,7 +1038,7 @@ def lambda_handler(event, context):
                 )
                 tg_send_message(chat_id, formatted_error, reply_to_message_id=reply_to_id)
             elif reply_text:
-                # *** NEW: Check if the text itself contains an error message ***
+                # Check if the text itself contains an error message
                 enriched_error = enrich_error_text(reply_text, conv_id)
                 
                 if enriched_error:
