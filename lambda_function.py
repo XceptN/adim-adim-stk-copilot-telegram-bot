@@ -835,28 +835,24 @@ def validate_telegram_secret(headers):
     return ok
 
 # -------- Handle different names for Runtalya --------
-def normalize_runtalya(text: str | None) -> str | None:
+def normalize_runtalya(text):
     """
     Replaces 'Runtalya', 'Runatolia', and common typo variations
     with 'Runtalya (Antalya-<current_year>)'.
+    Returns None if input is not a string.
     """
+    if not isinstance(text, str):
+        return text
+
     current_year = datetime.now().year
     replacement = f"Runtalya (Antalya-{current_year})"
 
-    # Pattern covers: Runtalya, Runatolia, and common typos
-    # - Run[t]alya / Run[ta]lia / Runt[a]lia
-    # - Runatol[i]a / Runatol[y]a / Runatal[i]a
-    # - Optional trailing/leading whitespace issues handled by \b
-    pattern = r'\b[Rr]un[at]{1,3}[ao]?l[iy]?[ay]?\b'
-
-    # More explicit alternation for safety
     explicit_patterns = [
         r'[Rr]untalya',
         r'[Rr]unatolia',
         r'[Rr]untalia',
         r'[Rr]unatol[iy]a',
         r'[Rr]unatal[iy]a',
-        r'[Rr]untalia',
         r'[Rr]unatolya',
         r'[Rr]untolya',
         r'[Rr]unatalia',
