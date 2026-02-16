@@ -11,6 +11,7 @@ import urllib.parse
 import urllib.error
 import uuid
 import random
+import re
 from datetime import datetime, timezone
 from wsgiref import headers
 
@@ -833,6 +834,37 @@ def validate_telegram_secret(headers):
     debug_print(f"[SEC] secret header present={bool(sent)} match={ok}")
     return ok
 
+# -------- Handle different names for Runtalya --------
+def normalize_runtalya(text: str) -> str:
+    """
+    Replaces 'Runtalya', 'Runatolia', and common typo variations
+    with 'Runtalya (Antalya-<current_year>)'.
+    """
+    current_year = datetime.now().year
+    replacement = f"Runtalya (Antalya-{current_year})"
+
+    # Pattern covers: Runtalya, Runatolia, and common typos
+    # - Run[t]alya / Run[ta]lia / Runt[a]lia
+    # - Runatol[i]a / Runatol[y]a / Runatal[i]a
+    # - Optional trailing/leading whitespace issues handled by \b
+    pattern = r'\b[Rr]un[at]{1,3}[ao]?l[iy]?[ay]?\b'
+
+    # More explicit alternation for safety
+    explicit_patterns = [
+        r'[Rr]untalya',
+        r'[Rr]unatolia',
+        r'[Rr]untalia',
+        r'[Rr]unatol[iy]a',
+        r'[Rr]unatal[iy]a',
+        r'[Rr]untalia',
+        r'[Rr]unatolya',
+        r'[Rr]untolya',
+        r'[Rr]unatalia',
+    ]
+
+    combined = r'\b(' + '|'.join(explicit_patterns) + r')\b'
+    return re.sub(combined, replacement, text)
+
 # -------- Lambda Handler --------
 def lambda_handler(event, context):
     t0 = time.time()
@@ -916,8 +948,8 @@ def lambda_handler(event, context):
             'body': json.dumps({'status': 'ok'})
         }    
 
-    caption = message.get("caption")
-    text = message.get("text")
+    caption = normalize_runtalya(message.get("caption"))
+    text = normalize_runtalya(message.get("text"))
     first_name = message.get('from', {}).get('first_name', 'İsimsiz')
     last_name = message.get('from', {}).get('last_name', '')
     full_name = f"{first_name} {last_name}".strip()
