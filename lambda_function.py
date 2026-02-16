@@ -948,8 +948,8 @@ def lambda_handler(event, context):
             'body': json.dumps({'status': 'ok'})
         }    
 
-    caption = normalize_runtalya(message.get("caption"))
-    text = normalize_runtalya(message.get("text"))
+    caption = message.get("caption")
+    text = message.get("text")
     first_name = message.get('from', {}).get('first_name', 'İsimsiz')
     last_name = message.get('from', {}).get('last_name', '')
     full_name = f"{first_name} {last_name}".strip()
