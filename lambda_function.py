@@ -856,6 +856,10 @@ def normalize_runtalya(text):
         r'[Rr]unatolya',
         r'[Rr]untolya',
         r'[Rr]unatalia',
+        r'[Rr]untolia',
+        r'[Rr]un talya',
+        r'[Rr]un tolia',
+        r'[Rr]un [Aa]ntalya',
     ]
 
     combined = r'\b(' + '|'.join(explicit_patterns) + r')\b'
