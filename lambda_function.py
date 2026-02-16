@@ -835,7 +835,7 @@ def validate_telegram_secret(headers):
     return ok
 
 # -------- Handle different names for Runtalya --------
-def normalize_runtalya(text: str) -> str:
+def normalize_runtalya(text: str | None) -> str | None:
     """
     Replaces 'Runtalya', 'Runatolia', and common typo variations
     with 'Runtalya (Antalya-<current_year>)'.
