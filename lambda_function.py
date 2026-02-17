@@ -529,7 +529,10 @@ def dl_post_text(token, conversation_id, text, user_id):
         "localTimezone": "Europe/Istanbul",
         "channelData": {
             "clientActivityID": client_activity_id
-        }
+        },
+        "cci_bot_id": os.environ.get("CCI_BOT_ID", ""),
+        "cci_tenant_id": os.environ.get("CCI_TENANT_ID", ""),
+        "cci_environment_id": os.environ.get("CCI_ENVIRONMENT_ID", "")        
     }
     
     debug_print(f"[DL] post text conv={conv_id} url={repr(url)} text_len={len(text)}")
@@ -603,7 +606,10 @@ def dl_upload_image(token, conversation_id, filename, content_type, content_byte
         },
         "locale": "en-US",
         "localTimestamp": local_timestamp,
-        "localTimezone": "UTC"
+        "localTimezone": "UTC",
+        "cci_bot_id": os.environ.get("CCI_BOT_ID", ""),
+        "cci_tenant_id": os.environ.get("CCI_TENANT_ID", ""),
+        "cci_environment_id": os.environ.get("CCI_ENVIRONMENT_ID", "")        
     }
     
     activity_json = json.dumps(activity, ensure_ascii=False)
