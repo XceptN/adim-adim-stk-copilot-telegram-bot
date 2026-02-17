@@ -39,10 +39,10 @@ DL_MAX_POLL_INTERVAL = float(os.environ.get("DL_MAX_POLL_INTERVAL", "3.0"))
 # ---- DynamoDB Session Persistence ----
 # Set DYNAMODB_SESSION_TABLE in Lambda env vars (e.g., "copilot-telegram-sessions")
 DYNAMODB_SESSION_TABLE = os.environ.get("DYNAMODB_SESSION_TABLE", "")
-# Direct Line tokens expire in ~30 min; refresh a bit earlier
-DL_TOKEN_TTL_SECONDS = int(os.environ.get("DL_TOKEN_TTL_SECONDS", "1500"))  # 25 min
+# Direct Line tokens expire in ~10 min; refresh a bit earlier
+DL_TOKEN_TTL_SECONDS = int(os.environ.get("DL_TOKEN_TTL_SECONDS", "550")) 
 # How long to keep a conversation alive (idle timeout)
-DL_CONVERSATION_TTL_SECONDS = int(os.environ.get("DL_CONVERSATION_TTL_SECONDS", "1800"))  # 30 min
+DL_CONVERSATION_TTL_SECONDS = int(os.environ.get("DL_CONVERSATION_TTL_SECONDS", "600"))
 
 # Lazy-init DynamoDB resource
 _dynamo_table = None
