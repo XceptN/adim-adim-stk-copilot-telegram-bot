@@ -1006,7 +1006,8 @@ def lambda_handler(event, context):
     chat_id = chat.get("id")
     chat_type = chat.get("type", "private")
     message_id = message.get("message_id")  # For reply functionality
-    user_id = f"tg-{chat_id}"
+    uid = str(message.get('from', {}).get('id', ''))
+    user_id = f"tg-{uid}"
     
     debug_print(f"[CTX] chat_id={chat_id} chat_type={chat_type} message_id={message_id} user_id={user_id}")
 
@@ -1031,7 +1032,7 @@ def lambda_handler(event, context):
     # For group chats, we'll reply to the original message for context
     reply_to_id = message_id if is_group_chat(chat) else None
     
-    uid = str(message.get('from', {}).get('id', ''))
+
     
     # Handle /bot command
     text = message.get('text', '')
