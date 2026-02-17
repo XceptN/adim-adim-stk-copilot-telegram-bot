@@ -2,6 +2,7 @@
 # Author: Özgür Yüksel
 
 import base64
+import boto3
 import json
 import mimetypes
 import os
@@ -34,6 +35,84 @@ DL_MAX_WAIT_SECONDS = float(os.environ.get("DL_MAX_WAIT_SECONDS", "30"))
 DL_INITIAL_POLL_INTERVAL = float(os.environ.get("DL_INITIAL_POLL_INTERVAL", "0.6"))
 DL_BACKOFF_FACTOR = float(os.environ.get("DL_BACKOFF_FACTOR", "1.5"))
 DL_MAX_POLL_INTERVAL = float(os.environ.get("DL_MAX_POLL_INTERVAL", "3.0"))
+
+# ---- DynamoDB Session Persistence ----
+# Set DYNAMODB_SESSION_TABLE in Lambda env vars (e.g., "copilot-telegram-sessions")
+DYNAMODB_SESSION_TABLE = os.environ.get("DYNAMODB_SESSION_TABLE", "")
+# Direct Line tokens expire in ~30 min; refresh a bit earlier
+DL_TOKEN_TTL_SECONDS = int(os.environ.get("DL_TOKEN_TTL_SECONDS", "1500"))  # 25 min
+# How long to keep a conversation alive (idle timeout)
+DL_CONVERSATION_TTL_SECONDS = int(os.environ.get("DL_CONVERSATION_TTL_SECONDS", "1800"))  # 30 min
+
+# Lazy-init DynamoDB resource
+_dynamo_table = None
+
+def _get_session_table():
+    global _dynamo_table
+    if _dynamo_table is None and DYNAMODB_SESSION_TABLE:
+        dynamodb = boto3.resource("dynamodb")
+        _dynamo_table = dynamodb.Table(DYNAMODB_SESSION_TABLE)
+    return _dynamo_table
+
+
+def session_load(chat_id):
+    """Load an existing Direct Line session for this Telegram chat_id."""
+    table = _get_session_table()
+    if not table:
+        debug_print("[SESSION] No DynamoDB table configured – sessions disabled")
+        return None
+    try:
+        resp = table.get_item(Key={"chat_id": str(chat_id)})
+        item = resp.get("Item")
+        if not item:
+            debug_print(f"[SESSION] No existing session for chat_id={chat_id}")
+            return None
+        # Check if expired
+        expires_at = float(item.get("expires_at", 0))
+        if time.time() > expires_at:
+            debug_print(f"[SESSION] Session expired for chat_id={chat_id}")
+            return None
+        debug_print(f"[SESSION] Loaded session for chat_id={chat_id} conv_id={item.get('conversation_id')}")
+        return item
+    except Exception as ex:
+        error_print(f"[SESSION] Load error: {ex}")
+        return None
+
+
+def session_save(chat_id, token, conversation_id, watermark=None):
+    """Save / update a Direct Line session for this Telegram chat_id."""
+    table = _get_session_table()
+    if not table:
+        return
+    try:
+        now = time.time()
+        item = {
+            "chat_id": str(chat_id),
+            "token": token,
+            "conversation_id": conversation_id,
+            "watermark": watermark or "",
+            "expires_at": int(now + DL_CONVERSATION_TTL_SECONDS),
+            "token_expires_at": int(now + DL_TOKEN_TTL_SECONDS),
+            "updated_at": int(now),
+            # TTL attribute for DynamoDB auto-cleanup (set generously)
+            "ttl": int(now + DL_CONVERSATION_TTL_SECONDS + 3600),
+        }
+        table.put_item(Item=item)
+        debug_print(f"[SESSION] Saved session chat_id={chat_id} conv_id={conversation_id}")
+    except Exception as ex:
+        error_print(f"[SESSION] Save error: {ex}")
+
+
+def session_delete(chat_id):
+    """Delete a session (e.g., on /start to force fresh conversation)."""
+    table = _get_session_table()
+    if not table:
+        return
+    try:
+        table.delete_item(Key={"chat_id": str(chat_id)})
+        debug_print(f"[SESSION] Deleted session for chat_id={chat_id}")
+    except Exception as ex:
+        error_print(f"[SESSION] Delete error: {ex}")
 
 
 def debug_print(*args, **kwargs):
@@ -337,6 +416,7 @@ def should_respond_in_group(message, chat, bot_username):
 
 # -------- Helpers: Direct Line --------
 def dl_get_token_and_conversation_via_secret():
+    """Generate a brand-new Direct Line token + conversation (cold start)."""
     url = f"{DIRECTLINE_BASE_URL}/v3/directline/tokens/generate"
     headers = {"Authorization": f"Bearer {DIRECTLINE_SECRET}"}
     debug_print(f"[DL] token generate via secret base={DIRECTLINE_BASE_URL}")
@@ -351,16 +431,71 @@ def dl_get_token_and_conversation_via_secret():
         raise RuntimeError("No token returned from Direct Line")
     return token, conv_id
 
-def dl_post_text(token, conversation_id_unused, text, user_id):
-    headers = {"Authorization": f"Bearer {token}"}
 
-    debug_print("[DL] start conversation (always)")
-    b_start, c_start, _ = http_post_json(f"{DIRECTLINE_BASE_URL}/v3/directline/conversations", {}, headers)
-    if c_start not in (200, 201):
-        debug_print(f"[DL][ERR] start conversation failed status={c_start} body={b_start}")
-        raise RuntimeError(f"Start conversation failed: {c_start} {b_start}")
-    conv_id = json.loads(b_start.decode())["conversationId"]
-    debug_print(f"[DL] conversation started id={conv_id}")
+def dl_refresh_token(old_token):
+    """Refresh an existing Direct Line token before it expires."""
+    url = f"{DIRECTLINE_BASE_URL}/v3/directline/tokens/refresh"
+    headers = {"Authorization": f"Bearer {old_token}"}
+    debug_print("[DL] refreshing token")
+    try:
+        body, code, _ = http_post_json(url, {}, headers=headers)
+        if code in (200, 201):
+            obj = json.loads(body.decode())
+            new_token = obj.get("token")
+            debug_print(f"[DL] token refresh ok new_token={'present' if new_token else 'missing'}")
+            return new_token
+        debug_print(f"[DL] token refresh failed status={code}")
+    except Exception as ex:
+        debug_print(f"[DL] token refresh error: {ex}")
+    return None
+
+
+def dl_get_or_resume_conversation(chat_id):
+    """
+    Try to resume an existing Direct Line conversation for this chat_id.
+    Falls back to creating a new one if no session exists or it's expired.
+    Returns (token, conversation_id, watermark, is_new_conversation).
+    """
+    session = session_load(chat_id)
+
+    if session:
+        token = session["token"]
+        conv_id = session["conversation_id"]
+        watermark = session.get("watermark", "")
+        token_expires = float(session.get("token_expires_at", 0))
+
+        # Refresh the token if it's about to expire (within 5 min)
+        if time.time() > token_expires - 300:
+            debug_print(f"[DL] Token nearing expiry, refreshing...")
+            new_token = dl_refresh_token(token)
+            if new_token:
+                token = new_token
+            else:
+                # Token refresh failed – start fresh
+                debug_print("[DL] Token refresh failed, starting new conversation")
+                token, conv_id = dl_get_token_and_conversation_via_secret()
+                return token, conv_id, None, True
+
+        # Reconnect to existing conversation (this validates it's still alive)
+        try:
+            headers = {"Authorization": f"Bearer {token}"}
+            reconnect_url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}"
+            body, code, _ = http_get_json(reconnect_url, headers=headers, timeout=15)
+            if code == 200:
+                debug_print(f"[DL] Resumed conversation conv_id={conv_id}")
+                return token, conv_id, watermark, False
+            else:
+                debug_print(f"[DL] Reconnect failed status={code}, starting fresh")
+        except Exception as ex:
+            debug_print(f"[DL] Reconnect error: {ex}, starting fresh")
+
+    # No valid session – create new
+    token, conv_id = dl_get_token_and_conversation_via_secret()
+    return token, conv_id, None, True
+
+def dl_post_text(token, conversation_id, text, user_id):
+    headers = {"Authorization": f"Bearer {token}"}
+    conv_id = conversation_id
 
     url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/activities"
     
@@ -397,21 +532,14 @@ def dl_post_text(token, conversation_id_unused, text, user_id):
     debug_print("[DL] post text ok")
     return conv_id
 
-def dl_upload_image(token, conversation_id_unused, filename, content_type, content_bytes, user_id, text):
+def dl_upload_image(token, conversation_id, filename, content_type, content_bytes, user_id, text):
     """
     Image upload in Copilot Studio format
     We have thumbnailUrl, channelData and other metadata in activity.
     """
     headers = {"Authorization": f"Bearer {token}"}
-    
-    # 1) Open conversation
-    debug_print("[DL] start conversation (always) for upload")
-    b_start, c_start, _ = http_post_json(f"{DIRECTLINE_BASE_URL}/v3/directline/conversations", {}, headers)
-    if c_start not in (200, 201):
-        debug_print(f"[DL][ERR] start conversation failed status={c_start} body={b_start}")
-        raise RuntimeError(f"Start conversation failed: {c_start} {b_start}")
-    conv_id = json.loads(b_start.decode())["conversationId"]
-    debug_print(f"[DL] conversation started id={conv_id}")
+    conv_id = conversation_id
+    debug_print(f"[DL] uploading image to existing conversation conv_id={conv_id}")
     
     # 2) Cleanup Text
     if not text or text.strip() == "":
@@ -735,7 +863,8 @@ def dl_poll_reply_text_and_attachments(token, conversation_id,
                                        initial_interval=None,
                                        backoff_factor=None,
                                        max_interval=None,
-                                       user_id_prefix="tg-"):
+                                       user_id_prefix="tg-",
+                                       start_watermark=None):
     headers = {"Authorization": f"Bearer {token}"}
     url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conversation_id}/activities"
 
@@ -745,7 +874,7 @@ def dl_poll_reply_text_and_attachments(token, conversation_id,
     max_interval = float(max_interval or DL_MAX_POLL_INTERVAL)
 
     deadline = time.time() + max_wait_seconds
-    watermark = None
+    watermark = start_watermark
     replies = []
     attempt = 0
 
@@ -810,7 +939,7 @@ def dl_poll_reply_text_and_attachments(token, conversation_id,
 
         if replies:
             debug_print(f"[DL] poll done replies={len(replies)} in_attempts={attempt}")
-            return replies
+            return replies, watermark
 
         jitter = random.uniform(-0.1, 0.1)
         sleep_for = max(0.1, min(max_interval, interval + jitter))
@@ -822,7 +951,7 @@ def dl_poll_reply_text_and_attachments(token, conversation_id,
         interval = min(max_interval, interval * factor)
 
     debug_print("[DL] poll timeout/no replies (adaptive)")
-    return replies
+    return replies, watermark
 
 # -------- Security --------
 def validate_telegram_secret(headers):
@@ -928,6 +1057,8 @@ def lambda_handler(event, context):
     # Handle /bot command
     text = message.get('text', '')
     if text and (text.startswith('/bot') or text.startswith(f'/bot@{TELEGRAM_BOT_USERNAME}')):
+        # Clear existing session so the user starts fresh
+        session_delete(chat_id)
         user_name = message.get('from', {}).get('first_name', '')
         welcome_text = (
             f"Merhaba {user_name}! 👋. Aramıza Hoş Geldin! ✨\n\n"
@@ -998,7 +1129,8 @@ def lambda_handler(event, context):
             debug_print(f"[FLOW] text detected len={len(text)}")
 
     try:
-        token, conv_id = dl_get_token_and_conversation_via_secret()
+        token, conv_id, watermark, is_new = dl_get_or_resume_conversation(chat_id)
+        debug_print(f"[FLOW] conversation: conv_id={conv_id} is_new={is_new} watermark={watermark}")
 
         message_to_send = text or caption
 
@@ -1042,7 +1174,16 @@ def lambda_handler(event, context):
             conv_id = dl_upload_image(token, conv_id, filename, content_type, img_bytes, user_id, instruction)
             sent_image = True
 
-        replies = dl_poll_reply_text_and_attachments(token, conv_id, max_wait_seconds=DL_MAX_WAIT_SECONDS)
+        # Poll for replies — use watermark from session to skip old messages
+        replies, last_watermark = dl_poll_reply_text_and_attachments(
+            token, conv_id,
+            max_wait_seconds=DL_MAX_WAIT_SECONDS,
+            start_watermark=watermark
+        )
+
+        # Persist session so the next message continues this conversation
+        session_save(chat_id, token, conv_id, watermark=last_watermark)
+
         if not replies:
             error_print(f"Cannot find actual reply from Copilot backend")
             msg = "Arka uçtan yanıt alınamadı. Lütfen daha sonra tekrar deneyiniz." if not sent_image else \
