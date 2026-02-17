@@ -1156,19 +1156,8 @@ def lambda_handler(event, context):
         token, conv_id, watermark, is_new = dl_get_or_resume_conversation(chat_id)
         debug_print(f"[FLOW] conversation: conv_id={conv_id} is_new={is_new} watermark={watermark}")
 
-        # Initialize the conversation like Web Chat does
         if is_new:
-            dl_send_conversation_update(token, conv_id, user_id)
-            # Give Copilot a moment to process the init
-            time.sleep(2)
-            # Poll and discard the greeting message
-            _, watermark = dl_poll_reply_text_and_attachments(
-                token, conv_id,
-                max_wait_seconds=10,
-                start_watermark=watermark,
-                user_id_prefix=user_id
-            )
-            debug_print(f"[FLOW] greeting consumed, watermark now={watermark}")
+            debug_print(f"[FLOW] new conversation, skipping conversationUpdate")
 
         message_to_send = text or caption
 
