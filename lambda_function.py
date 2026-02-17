@@ -1165,7 +1165,8 @@ def lambda_handler(event, context):
             _, watermark = dl_poll_reply_text_and_attachments(
                 token, conv_id,
                 max_wait_seconds=10,
-                start_watermark=watermark
+                start_watermark=watermark,
+                user_id_prefix=user_id
             )
             debug_print(f"[FLOW] greeting consumed, watermark now={watermark}")
 
@@ -1215,7 +1216,8 @@ def lambda_handler(event, context):
         replies, last_watermark = dl_poll_reply_text_and_attachments(
             token, conv_id,
             max_wait_seconds=DL_MAX_WAIT_SECONDS,
-            start_watermark=watermark
+            start_watermark=watermark,
+            user_id_prefix=user_id
         )
 
         # Persist session so the next message continues this conversation
