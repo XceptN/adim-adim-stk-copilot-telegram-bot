@@ -505,45 +505,47 @@ def dl_get_or_resume_conversation(chat_id):
 
 def dl_post_text(token, conversation_id, text, user_id):
     headers = {"Authorization": f"Bearer {token}"}
-    conv_id = conversation_id
-
-    url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/activities"
+    url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conversation_id}/activities"
     
-    # Payload in Copilot Studio format
-    client_activity_id = uuid.uuid4().hex[:12]
+    client_activity_id = uuid.uuid4().hex[:10]
     now = datetime.now(timezone.utc)
+    # Match Demo Website timestamp format with local timezone offset
     local_timestamp = now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}+00:00"
     
     payload = {
-        "type": "message",
+        "attachments": [],
+        "channelData": {
+            "attachmentSizes": [],
+            "cci_trace_id": uuid.uuid4().hex[:5],
+            "clientActivityID": client_activity_id
+        },
         "text": text,
         "textFormat": "plain",
+        "type": "message",
+        "cci_bot_id": os.environ.get("CCI_BOT_ID", ""),
+        "cci_tenant_id": os.environ.get("CCI_TENANT_ID", ""),
+        "cci_environment_id": os.environ.get("CCI_ENVIRONMENT_ID", ""),
         "channelId": "webchat",
         "from": {
             "id": user_id,
             "name": "",
             "role": "user"
         },
-        "locale": "tr-TR",
+        "locale": "en-US",
         "localTimestamp": local_timestamp,
-        "localTimezone": "Europe/Istanbul",
-        "channelData": {
-            "clientActivityID": client_activity_id
-        },
-        "cci_bot_id": os.environ.get("CCI_BOT_ID", ""),
-        "cci_tenant_id": os.environ.get("CCI_TENANT_ID", ""),
-        "cci_environment_id": os.environ.get("CCI_ENVIRONMENT_ID", "")        
+        "localTimezone": "Europe/Istanbul"
     }
     
-    debug_print(f"[DL] post text conv={conv_id} url={repr(url)} text_len={len(text)}")
+    debug_print(f"[DL] post text conv={conversation_id} text_len={len(text)}")
     debug_print(f"[DL] post text CONTENT: '{text}'")
+    debug_print(f"[DL] post text PAYLOAD: {json.dumps(payload, ensure_ascii=False)[:500]}")
     
     body, code, _ = http_post_json(url, payload, headers)
     if code not in (200, 201):
         debug_print(f"[DL][ERR] post text failed status={code} body={body}")
         raise RuntimeError(f"Post activity failed: {code} {body}")
     debug_print("[DL] post text ok")
-    return conv_id
+    return conversation_id
 
 def dl_upload_image(token, conversation_id, filename, content_type, content_bytes, user_id, text):
     """
