@@ -1086,7 +1086,7 @@ def lambda_handler(event, context):
         session_delete(chat_id)
         user_name = message.get('from', {}).get('first_name', '')
         new_text = (
-            f"Pekala. *Yeni sorunuzu dinliyorum.*"
+            f"Pekala. *Yeni sorunuzu alabilirim.*"
         )
         tg_send_message(chat_id, new_text, reply_to_message_id=reply_to_id)
             
