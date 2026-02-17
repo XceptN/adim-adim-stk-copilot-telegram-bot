@@ -490,7 +490,17 @@ def dl_get_or_resume_conversation(chat_id):
             debug_print(f"[DL] Reconnect error: {ex}, starting fresh")
 
     # No valid session – create new
-    token, conv_id = dl_get_token_and_conversation_via_secret()
+    token, _ = dl_get_token_and_conversation_via_secret()
+    # Actually start the conversation (token/generate only gives a token, doesn't open it)
+    headers = {"Authorization": f"Bearer {token}"}
+    debug_print("[DL] Starting new conversation via POST /conversations")
+    b_start, c_start, _ = http_post_json(
+        f"{DIRECTLINE_BASE_URL}/v3/directline/conversations", {}, headers
+    )
+    if c_start not in (200, 201):
+        raise RuntimeError(f"Start conversation failed: {c_start} {b_start}")
+    conv_id = json.loads(b_start.decode())["conversationId"]
+    debug_print(f"[DL] New conversation started conv_id={conv_id}")
     return token, conv_id, None, True
 
 def dl_post_text(token, conversation_id, text, user_id):
