@@ -973,37 +973,6 @@ def validate_telegram_secret(headers):
     debug_print(f"[SEC] secret header present={bool(sent)} match={ok}")
     return ok
 
-# -------- Handle different names for Runtalya --------
-def normalize_runtalya(text):
-    """
-    Replaces 'Runtalya', 'Runatolia', and common typo variations
-    with 'Runtalya (Antalya-<current_year>)'.
-    Returns None if input is not a string.
-    """
-    if not isinstance(text, str):
-        return text
-
-    current_year = datetime.now().year
-    replacement = f"Runtalya (Antalya-{current_year})"
-
-    explicit_patterns = [
-        r'[Rr]untalya',
-        r'[Rr]unatolia',
-        r'[Rr]untalia',
-        r'[Rr]unatol[iy]a',
-        r'[Rr]unatal[iy]a',
-        r'[Rr]unatolya',
-        r'[Rr]untolya',
-        r'[Rr]unatalia',
-        r'[Rr]untolia',
-        r'[Rr]un talya',
-        r'[Rr]un tolia',
-        r'[Rr]un [Aa]ntalya',
-    ]
-
-    combined = r'\b(' + '|'.join(explicit_patterns) + r')\b'
-    return re.sub(combined, replacement, text)
-
 # -------- Lambda Handler --------
 def lambda_handler(event, context):
     t0 = time.time()
