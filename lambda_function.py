@@ -1032,10 +1032,9 @@ def lambda_handler(event, context):
     # For group chats, we'll reply to the original message for context
     reply_to_id = message_id if is_group_chat(chat) else None
     
-
-    
-    # Handle /bot command
     text = message.get('text', '')
+
+    # Handle /bot command
     if text and (text.startswith('/bot') or text.startswith(f'/bot@{TELEGRAM_BOT_USERNAME}')):
         # Clear existing session so the user starts fresh
         session_delete(chat_id)
@@ -1053,6 +1052,21 @@ def lambda_handler(event, context):
             "*Evet, artık sorunu duyabilirim.*"
         )
         tg_send_message(chat_id, welcome_text, reply_to_message_id=reply_to_id)
+            
+        return {
+            'statusCode': 200,
+            'body': json.dumps({'status': 'ok'})
+        }    
+
+    # Handle /yeni command
+    if text and (text.startswith('/yeni') or text.startswith(f'/yeni@{TELEGRAM_BOT_USERNAME}')):
+        # Clear existing session so the user starts fresh
+        session_delete(chat_id)
+        user_name = message.get('from', {}).get('first_name', '')
+        new_text = (
+            f"Pekala. *Yeni sorunuzu dinliyorum.*"
+        )
+        tg_send_message(chat_id, new_text, reply_to_message_id=reply_to_id)
             
         return {
             'statusCode': 200,
