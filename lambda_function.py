@@ -1037,7 +1037,7 @@ def lambda_handler(event, context):
     chat_type = chat.get("type", "private")
     message_id = message.get("message_id")  # For reply functionality
     uid = str(message.get('from', {}).get('id', ''))
-    user_id = f"tg-{uid}"
+    user_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"telegram-{uid}"))
     
     debug_print(f"[CTX] chat_id={chat_id} chat_type={chat_type} message_id={message_id} user_id={user_id}")
 
