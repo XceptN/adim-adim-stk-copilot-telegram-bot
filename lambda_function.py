@@ -963,6 +963,28 @@ def dl_poll_reply_text_and_attachments(token, conversation_id,
     debug_print("[DL] poll timeout/no replies (adaptive)")
     return replies, watermark
 
+def dl_send_conversation_update(token, conversation_id, user_id):
+    """Send conversationUpdate to trigger Copilot Studio's greeting/init topics."""
+    headers = {"Authorization": f"Bearer {token}"}
+    url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conversation_id}/activities"
+    
+    payload = {
+        "type": "conversationUpdate",
+        "membersAdded": [
+            {"id": user_id, "name": "", "role": "user"}
+        ],
+        "from": {
+            "id": user_id,
+            "name": "",
+            "role": "user"
+        }
+    }
+    
+    debug_print(f"[DL] sending conversationUpdate conv={conversation_id}")
+    body, code, _ = http_post_json(url, payload, headers)
+    debug_print(f"[DL] conversationUpdate status={code}")
+    return code in (200, 201)
+
 # -------- Security --------
 def validate_telegram_secret(headers):
     if not REQUIRE_TG_SECRET:
@@ -1125,6 +1147,19 @@ def lambda_handler(event, context):
     try:
         token, conv_id, watermark, is_new = dl_get_or_resume_conversation(chat_id)
         debug_print(f"[FLOW] conversation: conv_id={conv_id} is_new={is_new} watermark={watermark}")
+
+        # Initialize the conversation like Web Chat does
+        if is_new:
+            dl_send_conversation_update(token, conv_id, user_id)
+            # Give Copilot a moment to process the init
+            time.sleep(2)
+            # Poll and discard the greeting message
+            _, watermark = dl_poll_reply_text_and_attachments(
+                token, conv_id,
+                max_wait_seconds=10,
+                start_watermark=watermark
+            )
+            debug_print(f"[FLOW] greeting consumed, watermark now={watermark}")
 
         message_to_send = text or caption
 
