@@ -104,7 +104,7 @@ def session_save(chat_id, token, conversation_id, watermark=None):
 
 
 def session_delete(chat_id):
-    """Delete a session (e.g., on /start to force fresh conversation)."""
+    """Delete a session (e.g., on /bot , /yeni to force fresh conversation)."""
     table = _get_session_table()
     if not table:
         return
@@ -1073,11 +1073,11 @@ def lambda_handler(event, context):
             f"Merhaba {user_name}! 👋. Aramıza Hoş Geldin! ✨\n\n"
             "İPK Platformu üzerinden yürütülen yardımseverlik koşularına ve elbette yüzme yarışlarına dair sorularına Yapay Zeka desteğiyle anında yanıt bulmak için bana ulaştığını varsayıyorum.\n"
             "Dayanışma ekosistemimizin verimliliğini sürekli kılmak üzere lütfen aşağıdaki kuralları dikkate alalım:\n"
-            "- 🤖 Sorular / Yanıtlar: Burada bir dijital asistan ile yazışıyorsun. Sorularını net ve yardımseverlik koşusu odaklı sorman, en doğru yanıtı almanı sağlar.⚠️\n"
-            "- Sorunu yöneltirken bana metin 📝 mesajı veya resim 🖼 gönderebilirsin. Eğer görme engelliysen ve yanıtımı betimleme yaparak yazmamı tercih edersen, bunu önceden belirtmen yeterli.\n"
-            "- Sorumluluk sahibi olmak önemli: Yaptığınız iş kolaylaşsın diye buradayım. Spesifik bir parkurda seninle yürümek hoşuma gider. Bana herhangi bir yapay zeka aracı gibi davranmaz, içini döküp, rahatlamak için fıkra filan istemezsen sevinirim. Yoğun kampanya dönemlerinde herkesin mutlaka bir sorusu olacaktır; kimseyi kuyrukta bekletmeyelim.\n"
-            "- 🔍 Teyit şart: Yanıtlar bazen hatalı bilgi içerebilir; elimdeki dokümanları tarayarak bir şeyler yazıyorum ve bazen benim de kafam karışabiliyor. Kritik kararlardan önce bilgileri teyit etmeyi unutma. Eğer yanlış bir laf edersem, öğrendiğinde bana doğrusunu yaz olur mu? Zaman zaman kafam karışsa da öğrenip, hatalarımı düzeltmekte iyiyim 😀\n"
-            "- 📩 Teknik Destek: Sana yanıt veremediğim veya sistemsel bir sorun yaşadığın durumlarda mailini bekliyoruz: iyilikpesindekos@adimadim.org\n\n"
+            "🔸 🤖 Sorular / Yanıtlar: Burada bir dijital asistan ile yazışıyorsun. Sorularını net ve yardımseverlik koşusu odaklı sorman, en doğru yanıtı almanı sağlar.⚠️\n"
+            "🔸 Sorunu yöneltirken bana metin 📝 mesajı veya resim 🖼 gönderebilirsin. Eğer görme engelliysen ve yanıtımı betimleme yaparak yazmamı tercih edersen, bunu önceden belirtmen yeterli.\n"
+            "🔸 Sorumluluk sahibi olmak önemli: Yaptığınız iş kolaylaşsın diye buradayım. Spesifik bir parkurda seninle yürümek hoşuma gider. Bana herhangi bir yapay zeka aracı gibi davranmaz, içini döküp, rahatlamak için fıkra filan istemezsen sevinirim. Yoğun kampanya dönemlerinde herkesin mutlaka bir sorusu olacaktır; kimseyi kuyrukta bekletmeyelim.\n"
+            "🔸 🔍 Teyit şart: Yanıtlar bazen hatalı bilgi içerebilir; elimdeki dokümanları tarayarak bir şeyler yazıyorum ve bazen benim de kafam karışabiliyor. Kritik kararlardan önce bilgileri teyit etmeyi unutma.\n"
+            "🔸 📩 Teknik Destek: Sana yanıt veremediğim veya sistemsel bir sorun yaşadığın durumlarda mailini bekliyoruz: iyilikpesindekos@adimadim.org\n\n"
             "_Unutma, her bir gereksiz sorgu, gerçekten yardıma ihtiyaç bir başka STK’nın yanıta ulaşmasını geciktirebilir. Hassasiyetin için şimdiden teşekkürler._\n\n"
             "*Evet, artık sorunu duyabilirim.*"
         )
@@ -1094,7 +1094,7 @@ def lambda_handler(event, context):
         session_delete(chat_id)
         user_name = message.get('from', {}).get('first_name', '')
         new_text = (
-            f"Pekala. *Yeni sorunuzu alabilirim.*"
+            f"Pekala {user_name} ...\n\n*Yeni sorunu alabilirim.*"
         )
         tg_send_message(chat_id, new_text, reply_to_message_id=reply_to_id)
             
