@@ -1065,7 +1065,7 @@ def lambda_handler(event, context):
     text = message.get('text', '')
 
     # Handle /bot command
-    if text and (text.startswith('/bot') or text.startswith(f'/bot@{TELEGRAM_BOT_USERNAME}')):
+    if text and text in ('/bot', f'/bot@{TELEGRAM_BOT_USERNAME}'):
         # Clear existing session so the user starts fresh
         session_delete(chat_id)
         user_name = message.get('from', {}).get('first_name', '')
@@ -1089,7 +1089,7 @@ def lambda_handler(event, context):
         }    
 
     # Handle /yeni command
-    if text and (text.startswith('/yeni') or text.startswith(f'/yeni@{TELEGRAM_BOT_USERNAME}')):
+    if text and text in ('/yeni', f'/yeni@{TELEGRAM_BOT_USERNAME}'):
         # Clear existing session so the user starts fresh
         session_delete(chat_id)
         user_name = message.get('from', {}).get('first_name', '')
