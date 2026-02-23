@@ -55,39 +55,39 @@ def _get_session_table():
     return _dynamo_table
 
 
-def session_load(chat_id):
+def session_load(session_key):
     """Load an existing Direct Line session for this Telegram chat_id."""
     table = _get_session_table()
     if not table:
         debug_print("[SESSION] No DynamoDB table configured – sessions disabled")
         return None
     try:
-        resp = table.get_item(Key={"chat_id": str(chat_id)})
+        resp = table.get_item(Key={"session_key": session_key})
         item = resp.get("Item")
         if not item:
-            debug_print(f"[SESSION] No existing session for chat_id={chat_id}")
+            debug_print(f"[SESSION] No existing session for session_key={session_key}")
             return None
         # Check if expired
         expires_at = float(item.get("expires_at", 0))
         if time.time() > expires_at:
-            debug_print(f"[SESSION] Session expired for chat_id={chat_id}")
+            debug_print(f"[SESSION] Session expired for session_key={session_key}")
             return None
-        debug_print(f"[SESSION] Loaded session for chat_id={chat_id} conv_id={item.get('conversation_id')}")
+        debug_print(f"[SESSION] Loaded session for session_key={session_key} conv_id={item.get('conversation_id')}")
         return item
     except Exception as ex:
         error_print(f"[SESSION] Load error: {ex}")
         return None
 
 
-def session_save(chat_id, token, conversation_id, watermark=None):
-    """Save / update a Direct Line session for this Telegram chat_id."""
+def session_save(session_key, token, conversation_id, watermark=None):
+    """Save / update a Direct Line session for this Telegram session_key."""
     table = _get_session_table()
     if not table:
         return
     try:
         now = time.time()
         item = {
-            "chat_id": str(chat_id),
+            "session_key": str(session_key),
             "token": token,
             "conversation_id": conversation_id,
             "watermark": watermark or "",
@@ -98,19 +98,19 @@ def session_save(chat_id, token, conversation_id, watermark=None):
             "ttl": int(now + DL_CONVERSATION_TTL_SECONDS + 3600),
         }
         table.put_item(Item=item)
-        debug_print(f"[SESSION] Saved session chat_id={chat_id} conv_id={conversation_id}")
+        debug_print(f"[SESSION] Saved session session_key={session_key} conv_id={conversation_id}")
     except Exception as ex:
         error_print(f"[SESSION] Save error: {ex}")
 
 
-def session_delete(chat_id):
+def session_delete(session_key):
     """Delete a session (e.g., on /bot , /yeni to force fresh conversation)."""
     table = _get_session_table()
     if not table:
         return
     try:
-        table.delete_item(Key={"chat_id": str(chat_id)})
-        debug_print(f"[SESSION] Deleted session for chat_id={chat_id}")
+        table.delete_item(Key={"session_key": str(session_key)})
+        debug_print(f"[SESSION] Deleted session for session_key={session_key}")
     except Exception as ex:
         error_print(f"[SESSION] Delete error: {ex}")
 
@@ -450,13 +450,13 @@ def dl_refresh_token(old_token):
     return None
 
 
-def dl_get_or_resume_conversation(chat_id):
+def dl_get_or_resume_conversation(session_key):
     """
-    Try to resume an existing Direct Line conversation for this chat_id.
+    Try to resume an existing Direct Line conversation for this session_key.
     Falls back to creating a new one if no session exists or it's expired.
     Returns (token, conversation_id, watermark, is_new_conversation).
     """
-    session = session_load(chat_id)
+    session = session_load(session_key)
 
     if session:
         token = session["token"]
