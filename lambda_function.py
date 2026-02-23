@@ -1086,7 +1086,14 @@ def lambda_handler(event, context):
         return {
             'statusCode': 200,
             'body': json.dumps({'status': 'ok'})
-        }    
+        }
+
+    # /bot with following query
+    if text and text.startswith('/bot'):
+        session_delete(chat_id)
+        cleaned_text = text.removeprefix('/bot')
+        debug_print(f"[GROUP] Using cleaned text: '{cleaned_text}' (original: '{text}')")
+        message["text"] = cleaned_text
 
     # Handle /yeni command
     if text and text in ('/yeni', f'/yeni@{TELEGRAM_BOT_USERNAME}'):
@@ -1101,7 +1108,14 @@ def lambda_handler(event, context):
         return {
             'statusCode': 200,
             'body': json.dumps({'status': 'ok'})
-        }    
+        }
+
+    # /yeni with following query
+    if text and text.startswith('/yeni'):
+        session_delete(chat_id)
+        cleaned_text = text.removeprefix('/yeni')
+        debug_print(f"[GROUP] Using cleaned text: '{cleaned_text}' (original: '{text}')")
+        message["text"] = cleaned_text    
 
     caption = message.get("caption")
     text = message.get("text")
