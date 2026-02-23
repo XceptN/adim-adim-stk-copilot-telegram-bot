@@ -1071,7 +1071,7 @@ def lambda_handler(event, context):
     
     text = message.get('text', '')
 
-    # Handle /bot command
+    # Handle /bot command without image
     if text and text in ('/bot', f'/bot@{TELEGRAM_BOT_USERNAME}'):
         # Clear existing session so the user starts fresh
         session_delete(session_key)
@@ -1095,14 +1095,14 @@ def lambda_handler(event, context):
             'body': json.dumps({'status': 'ok'})
         }
 
-    # /bot with following query
+    # /bot with following query without image
     if text and text.startswith('/bot'):
         session_delete(session_key)
         cleaned_text = text.removeprefix('/bot')
         debug_print(f"[GROUP] Using cleaned text: '{cleaned_text}' (original: '{text}')")
         message["text"] = cleaned_text
 
-    # Handle /yeni command
+    # Handle /yeni command without image
     if text and text in ('/yeni', f'/yeni@{TELEGRAM_BOT_USERNAME}'):
         # Clear existing session so the user starts fresh
         session_delete(session_key)
@@ -1117,12 +1117,32 @@ def lambda_handler(event, context):
             'body': json.dumps({'status': 'ok'})
         }
 
-    # /yeni with following query
+    # /yeni with following query without image
     if text and text.startswith('/yeni'):
         session_delete(session_key)
         cleaned_text = text.removeprefix('/yeni')
         debug_print(f"[GROUP] Using cleaned text: '{cleaned_text}' (original: '{text}')")
         message["text"] = cleaned_text    
+
+    caption = message.get('caption', '')
+
+    # /bot with following query with image
+    if text and text.startswith('/bot'):
+        session_delete(session_key)
+        cleaned_caption = caption.removeprefix('/bot')
+        if not cleaned_caption:
+            cleaned_caption = DEFAULT_PROMPT
+        debug_print(f"[GROUP] Using cleaned caption: '{cleaned_caption}' (original: '{caption}')")
+        message["caption"] = cleaned_caption
+
+    # /yeni with following query with image
+    if text and text.startswith('/yeni'):
+        session_delete(session_key)
+        cleaned_caption = caption.removeprefix('/yeni')
+        if not cleaned_caption:
+            cleaned_caption = DEFAULT_PROMPT
+        debug_print(f"[GROUP] Using cleaned caption: '{cleaned_caption}' (original: '{caption}')")
+        message["caption"] = cleaned_caption
 
     caption = message.get("caption")
     text = message.get("text")
