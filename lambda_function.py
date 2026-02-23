@@ -1039,7 +1039,14 @@ def lambda_handler(event, context):
     uid = str(message.get('from', {}).get('id', ''))
     user_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"telegram-{uid}"))
     
-    debug_print(f"[CTX] chat_id={chat_id} chat_type={chat_type} message_id={message_id} user_id={user_id}")
+    # Session key: in groups, each user gets their own session (chat_id:uid)
+    # In private chats, chat_id alone is sufficient (it's unique per user)
+    if chat_type in ("group", "supergroup"):
+        session_key = f"{chat_id}:{uid}"
+    else:
+        session_key = str(chat_id)
+
+    debug_print(f"[CTX] chat_id={chat_id} chat_type={chat_type} message_id={message_id} user_id={user_id} session_key={session_key}")
 
     if not chat_id:
         debug_print("[INVOKE] no chat -> 200")
@@ -1067,7 +1074,7 @@ def lambda_handler(event, context):
     # Handle /bot command
     if text and text in ('/bot', f'/bot@{TELEGRAM_BOT_USERNAME}'):
         # Clear existing session so the user starts fresh
-        session_delete(chat_id)
+        session_delete(session_key)
         user_name = message.get('from', {}).get('first_name', '')
         welcome_text = (
             f"Merhaba {user_name}! 👋. Aramıza Hoş Geldin! ✨\n\n"
@@ -1090,7 +1097,7 @@ def lambda_handler(event, context):
 
     # /bot with following query
     if text and text.startswith('/bot'):
-        session_delete(chat_id)
+        session_delete(session_key)
         cleaned_text = text.removeprefix('/bot')
         debug_print(f"[GROUP] Using cleaned text: '{cleaned_text}' (original: '{text}')")
         message["text"] = cleaned_text
@@ -1098,7 +1105,7 @@ def lambda_handler(event, context):
     # Handle /yeni command
     if text and text in ('/yeni', f'/yeni@{TELEGRAM_BOT_USERNAME}'):
         # Clear existing session so the user starts fresh
-        session_delete(chat_id)
+        session_delete(session_key)
         user_name = message.get('from', {}).get('first_name', '')
         new_text = (
             f"Pekala {user_name} ...\n\n*Yeni sorunu alabilirim.*"
@@ -1112,7 +1119,7 @@ def lambda_handler(event, context):
 
     # /yeni with following query
     if text and text.startswith('/yeni'):
-        session_delete(chat_id)
+        session_delete(session_key)
         cleaned_text = text.removeprefix('/yeni')
         debug_print(f"[GROUP] Using cleaned text: '{cleaned_text}' (original: '{text}')")
         message["text"] = cleaned_text    
@@ -1167,7 +1174,7 @@ def lambda_handler(event, context):
             debug_print(f"[FLOW] text detected len={len(text)}")
 
     try:
-        token, conv_id, watermark, is_new = dl_get_or_resume_conversation(chat_id)
+        token, conv_id, watermark, is_new = dl_get_or_resume_conversation(session_key)
         debug_print(f"[FLOW] conversation: conv_id={conv_id} is_new={is_new} watermark={watermark}")
 
         if is_new:
@@ -1224,7 +1231,7 @@ def lambda_handler(event, context):
         )
 
         # Persist session so the next message continues this conversation
-        session_save(chat_id, token, conv_id, watermark=last_watermark)
+        session_save(session_key, token, conv_id, watermark=last_watermark)
 
         if not replies:
             error_print(f"Cannot find actual reply from Copilot backend")
