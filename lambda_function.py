@@ -35,9 +35,6 @@ DL_MAX_WAIT_SECONDS = float(os.environ.get("DL_MAX_WAIT_SECONDS", "30"))
 DL_INITIAL_POLL_INTERVAL = float(os.environ.get("DL_INITIAL_POLL_INTERVAL", "0.6"))
 DL_BACKOFF_FACTOR = float(os.environ.get("DL_BACKOFF_FACTOR", "1.5"))
 DL_MAX_POLL_INTERVAL = float(os.environ.get("DL_MAX_POLL_INTERVAL", "3.0"))
-# Safety buffer: seconds reserved AFTER polling for sending the timeout
-# message to Telegram + session save (must finish before Lambda hard-kills)
-LAMBDA_SAFETY_BUFFER = float(os.environ.get("LAMBDA_SAFETY_BUFFER", "8.0"))
 
 # ---- DynamoDB Session Persistence ----
 # Set DYNAMODB_SESSION_TABLE in Lambda env vars (e.g., "copilot-telegram-sessions")
@@ -104,6 +101,36 @@ def session_save(session_key, token, conversation_id, watermark=None):
         debug_print(f"[SESSION] Saved session session_key={session_key} conv_id={conversation_id}")
     except Exception as ex:
         error_print(f"[SESSION] Save error: {ex}")
+
+
+def dedup_check_and_lock(update_id):
+    """
+    Attempt to claim this Telegram update_id so only one Lambda processes it.
+    Returns True if we got the lock (first time), False if already seen (retry).
+    Uses a conditional PutItem so only one concurrent invocation wins.
+    """
+    table = _get_session_table()
+    if not table:
+        # No DynamoDB table -> no dedup possible, process anyway
+        return True
+    dedup_key = f"dedup:{update_id}"
+    try:
+        table.put_item(
+            Item={
+                "session_key": dedup_key,
+                "created_at": int(time.time()),
+                "ttl": int(time.time()) + 300,  # auto-cleanup after 5 min
+            },
+            ConditionExpression="attribute_not_exists(session_key)",
+        )
+        debug_print(f"[DEDUP] Claimed update_id={update_id}")
+        return True
+    except table.meta.client.exceptions.ConditionalCheckFailedException:
+        debug_print(f"[DEDUP] Duplicate update_id={update_id} -> skipping")
+        return False
+    except Exception as ex:
+        error_print(f"[DEDUP] Error: {ex} -> processing anyway")
+        return True  # Fail-open: process if DynamoDB errors
 
 
 def session_delete(session_key):
@@ -1030,6 +1057,12 @@ def lambda_handler(event, context):
         error_print(f"invalid json ex={ex}")
         return {"statusCode": 400, "body": "invalid json"}
 
+    # ========== DEDUP: skip Telegram webhook retries ==========
+    update_id = update.get("update_id")
+    if update_id and not dedup_check_and_lock(update_id):
+        debug_print(f"[INVOKE] duplicate update_id={update_id} -> returning 200")
+        return {"statusCode": 200, "body": "duplicate"}
+
     message = (update.get("message") or update.get("edited_message")) or {}
     
     debug_print(f"Complete message structure:")
@@ -1251,15 +1284,9 @@ def lambda_handler(event, context):
             sent_image = True
 
         # Poll for replies — use watermark from session to skip old messages
-        # Calculate polling budget from Lambda remaining time so we always
-        # have LAMBDA_SAFETY_BUFFER seconds left to send the timeout msg.
-        remaining_sec = context.get_remaining_time_in_millis() / 1000.0
-        effective_max_wait = max(2.0, min(DL_MAX_WAIT_SECONDS, remaining_sec - LAMBDA_SAFETY_BUFFER))
-        debug_print(f"[FLOW] lambda_remaining={remaining_sec:.1f}s poll_budget={effective_max_wait:.1f}s")
-
         replies, last_watermark = dl_poll_reply_text_and_attachments(
             token, conv_id,
-            max_wait_seconds=effective_max_wait,
+            max_wait_seconds=DL_MAX_WAIT_SECONDS,
             start_watermark=watermark,
             user_id_prefix=user_id
         )
