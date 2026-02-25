@@ -31,10 +31,10 @@ AI_DISCLAIMER = os.environ.get("AI_DISCLAIMER")
 TELEGRAM_BOT_USERNAME = os.environ.get("TELEGRAM_BOT_USERNAME", "")
 
 # ---- Tuning knobs for polling patience ----
-DL_MAX_WAIT_SECONDS = float(os.environ.get("DL_MAX_WAIT_SECONDS", "30"))
+DL_MAX_WAIT_SECONDS = float(os.environ.get("DL_MAX_WAIT_SECONDS", "120"))
 DL_INITIAL_POLL_INTERVAL = float(os.environ.get("DL_INITIAL_POLL_INTERVAL", "0.6"))
-DL_BACKOFF_FACTOR = float(os.environ.get("DL_BACKOFF_FACTOR", "1.5"))
-DL_MAX_POLL_INTERVAL = float(os.environ.get("DL_MAX_POLL_INTERVAL", "3.0"))
+DL_BACKOFF_FACTOR = float(os.environ.get("DL_BACKOFF_FACTOR", "1.9"))
+DL_MAX_POLL_INTERVAL = float(os.environ.get("DL_MAX_POLL_INTERVAL", "17.0"))
 
 # ---- DynamoDB Session Persistence ----
 # Set DYNAMODB_SESSION_TABLE in Lambda env vars (e.g., "copilot-telegram-sessions")
