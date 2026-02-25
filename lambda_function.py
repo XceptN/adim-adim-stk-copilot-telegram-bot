@@ -1145,7 +1145,7 @@ def lambda_handler(event, context):
             "👉 *Sorumluluk sahibi olmak önemli:* Yaptığınız iş kolaylaşsın diye buradayım. Spesifik bir parkurda seninle yürümek hoşuma gider. Bana herhangi bir yapay zeka aracı gibi davranmaz, içini döküp, rahatlamak için fıkra filan istemezsen sevinirim. Yoğun kampanya dönemlerinde herkesin mutlaka bir sorusu olacaktır; kimseyi kuyrukta bekletmeyelim.\n"
             "👉 *Teyit şart 🔍:* Yanıtlar bazen hatalı bilgi içerebilir; elimdeki dokümanları tarayarak bir şeyler yazıyorum ve bazen benim de kafam karışabiliyor. Kritik kararlardan önce bilgileri teyit etmeyi unutma.\n"
             "👉 *Teknik Destek:* Sana yanıt veremediğim veya sistemsel bir sorun yaşadığın durumlarda mailini bekliyoruz: 📩 iyilikpesindekos@adimadim.org\n\n"
-            "_Unutma, her bir gereksiz sorgu, gerçekten yardıma ihtiyaç bir başka STK’nın yanıta ulaşmasını geciktirebilir. Hassasiyetin için şimdiden teşekkürler._\n\n"
+            "_Unutma, her bir gereksiz sorgu, gerçekten yardıma ihtiyaç duyan bir başka STK’nın yanıta ulaşmasını geciktirebilir. Hassasiyetin için şimdiden teşekkürler._\n\n"
             "*Evet, artık sorunu duyabilirim.*"
         )
         tg_send_message(chat_id, welcome_text, reply_to_message_id=reply_to_id)
