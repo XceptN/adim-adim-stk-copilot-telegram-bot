@@ -262,31 +262,111 @@ def strip_citation_lines(text):
     cleaned = re.sub(r'\[\d\]', '', cleaned, flags=re.MULTILINE)
     return cleaned.strip()
 
+def markdown_to_telegram_html(text):
+    """
+    Convert standard Markdown (as returned by Copilot Studio) to Telegram-safe HTML.
+    
+    Handles: **bold**, __bold__, *italic*, _italic_, `code`, ```code blocks```,
+             [link text](url), ~~strikethrough~~
+    
+    Telegram HTML supports: <b>, <i>, <code>, <pre>, <a href="">, <s>
+    """
+    # First, escape HTML special chars in the raw text
+    # We'll do this carefully to not break our own tags later
+    
+    # Step 1: Extract code blocks and inline code to protect them
+    protected = {}
+    counter = [0]
+    
+    def protect(match):
+        key = f"\x00PROTECTED{counter[0]}\x00"
+        counter[0] += 1
+        protected[key] = match.group(0)
+        return key
+    
+    # Protect fenced code blocks first (```...```)
+    result = re.sub(r'```([\s\S]*?)```', protect, text)
+    # Protect inline code (`...`)
+    result = re.sub(r'`([^`]+)`', protect, result)
+    
+    # Step 2: Escape HTML entities in unprotected text
+    result = result.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    
+    # Step 3: Convert Markdown formatting to HTML
+    # Links: [text](url) -> <a href="url">text</a>
+    result = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', result)
+    
+    # Bold: **text** or __text__  -> <b>text</b>
+    result = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', result)
+    result = re.sub(r'__(.+?)__', r'<b>\1</b>', result)
+    
+    # Italic: *text* or _text_ -> <i>text</i>
+    # Be careful not to match underscores within words (e.g. variable_name)
+    result = re.sub(r'(?<!\w)\*([^\*]+?)\*(?!\w)', r'<i>\1</i>', result)
+    result = re.sub(r'(?<!\w)_([^_]+?)_(?!\w)', r'<i>\1</i>', result)
+    
+    # Strikethrough: ~~text~~ -> <s>text</s>
+    result = re.sub(r'~~(.+?)~~', r'<s>\1</s>', result)
+    
+    # Step 4: Restore protected code blocks with HTML tags
+    for key, original in protected.items():
+        if original.startswith('```'):
+            code_content = original[3:-3].strip()
+            # Escape HTML inside code
+            code_content = code_content.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            replacement = f'<pre>{code_content}</pre>'
+        else:
+            code_content = original[1:-1]
+            code_content = code_content.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            replacement = f'<code>{code_content}</code>'
+        result = result.replace(key, replacement)
+    
+    return result
+
+
+def strip_markdown(text):
+    """Remove Markdown formatting entirely for plain text fallback."""
+    # Remove fenced code block markers
+    result = re.sub(r'```[\s\S]*?```', lambda m: m.group(0)[3:-3].strip(), text)
+    # Remove inline code markers
+    result = re.sub(r'`([^`]+)`', r'\1', result)
+    # Convert links to "text (url)" format
+    result = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'\1 (\2)', result)
+    # Remove bold/italic markers
+    result = re.sub(r'\*\*(.+?)\*\*', r'\1', result)
+    result = re.sub(r'__(.+?)__', r'\1', result)
+    result = re.sub(r'(?<!\w)\*([^\*]+?)\*(?!\w)', r'\1', result)
+    result = re.sub(r'(?<!\w)_([^_]+?)_(?!\w)', r'\1', result)
+    result = re.sub(r'~~(.+?)~~', r'\1', result)
+    return result
+
+
 def tg_send_message(chat_id, text, reply_to_message_id=None):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
     text = strip_citation_lines(text)
 
-    # Try with Markdown first
-    formatted_text = text.replace('**', '*').replace('__', '_')
-    payload = {"chat_id": chat_id, "text": formatted_text, "parse_mode": "Markdown"}
+    # Strategy: try HTML (most reliable with formatting) -> plain text fallback
+    html_text = markdown_to_telegram_html(text)
+    payload = {"chat_id": chat_id, "text": html_text, "parse_mode": "HTML"}
     if reply_to_message_id:
         payload["reply_to_message_id"] = reply_to_message_id
-    
+
     try:
         _, code, _ = http_post_json(url, payload)
-        debug_print(f"[TG] sendMessage (Markdown) status={code}")
+        debug_print(f"[TG] sendMessage (HTML) status={code}")
         if code == 200:
             info_print(f"[TG] Message sent to user: <{text}>")
             return True
     except urllib.error.HTTPError as e:
-        debug_print(f"[TG] sendMessage Markdown failed ({e.code}), falling back to plain text")
+        debug_print(f"[TG] sendMessage HTML failed ({e.code}), falling back to plain text")
 
-    # Fallback: send without parse_mode (plain text)
-    payload_plain = {"chat_id": chat_id, "text": text}
+    # Fallback: send as plain text (strip all formatting)
+    plain_text = strip_markdown(text)
+    payload_plain = {"chat_id": chat_id, "text": plain_text}
     if reply_to_message_id:
         payload_plain["reply_to_message_id"] = reply_to_message_id
-    
+
     try:
         _, code, _ = http_post_json(url, payload_plain)
         debug_print(f"[TG] sendMessage (plain) status={code}")
@@ -904,13 +984,13 @@ def format_error_for_telegram(error_code, error_message, conversation_id, timest
     parts = []
     
     if description:
-        parts.append(f"*Hata Mesajı:* {description}")
+        parts.append(f"**Hata Mesajı:** {description}")
     
     if error_code:
-        parts.append(f"*Hata Kodu:* {error_code}")
+        parts.append(f"**Hata Kodu:** {error_code}")
     
-    parts.append(f"*Conversation Id:* {conversation_id}")
-    parts.append(f"*Zaman (UTC):* {timestamp}")
+    parts.append(f"**Conversation Id:** {conversation_id}")
+    parts.append(f"**Zaman (UTC):** {timestamp}")
     
     return "\n".join(parts)
 
@@ -1183,13 +1263,13 @@ def lambda_handler(event, context):
             f"Merhaba {user_name}! 👋. Aramıza Hoş Geldin! ✨\n\n"
             "İPK Platformu üzerinden yürütülen yardımseverlik koşularına ve elbette yüzme yarışlarına dair sorularına Yapay Zeka desteğiyle anında yanıt bulmak için bana ulaştığını varsayıyorum.\n"
             "Dayanışma ekosistemimizin verimliliğini sürekli kılmak üzere lütfen aşağıdaki kuralları dikkate alalım:\n"
-            "👉 *Sorular / Yanıtlar:* Burada bir dijital asistan 🤖 ile yazışıyorsun. Sorularını net ve yardımseverlik koşusu odaklı sorman, en doğru yanıtı almanı sağlar.⚠️\n"
+            "👉 **Sorular / Yanıtlar:** Burada bir dijital asistan 🤖 ile yazışıyorsun. Sorularını net ve yardımseverlik koşusu odaklı sorman, en doğru yanıtı almanı sağlar.⚠️\n"
             "👉 Sorunu yöneltirken bana metin 📝 mesajı veya resim 🖼 gönderebilirsin. Eğer görme engelliysen ve yanıtımı betimleme yaparak yazmamı tercih edersen, bunu önceden belirtmen yeterli.\n"
-            "👉 *Sorumluluk sahibi olmak önemli:* Yaptığınız iş kolaylaşsın diye buradayım. Spesifik bir parkurda seninle yürümek hoşuma gider. Bana herhangi bir yapay zeka aracı gibi davranmaz, içini döküp, rahatlamak için fıkra filan istemezsen sevinirim. Yoğun kampanya dönemlerinde herkesin mutlaka bir sorusu olacaktır; kimseyi kuyrukta bekletmeyelim.\n"
-            "👉 *Teyit şart 🔍:* Yanıtlar bazen hatalı bilgi içerebilir; elimdeki dokümanları tarayarak bir şeyler yazıyorum ve bazen benim de kafam karışabiliyor. Kritik kararlardan önce bilgileri teyit etmeyi unutma.\n"
-            "👉 *Teknik Destek:* Sana yanıt veremediğim veya sistemsel bir sorun yaşadığın durumlarda mailini bekliyoruz: 📩 iyilikpesindekos@adimadim.org\n\n"
+            "👉 **Sorumluluk sahibi olmak önemli:** Yaptığınız iş kolaylaşsın diye buradayım. Spesifik bir parkurda seninle yürümek hoşuma gider. Bana herhangi bir yapay zeka aracı gibi davranmaz, içini döküp, rahatlamak için fıkra filan istemezsen sevinirim. Yoğun kampanya dönemlerinde herkesin mutlaka bir sorusu olacaktır; kimseyi kuyrukta bekletmeyelim.\n"
+            "👉 **Teyit şart 🔍:** Yanıtlar bazen hatalı bilgi içerebilir; elimdeki dokümanları tarayarak bir şeyler yazıyorum ve bazen benim de kafam karışabiliyor. Kritik kararlardan önce bilgileri teyit etmeyi unutma.\n"
+            "👉 **Teknik Destek:** Sana yanıt veremediğim veya sistemsel bir sorun yaşadığın durumlarda mailini bekliyoruz: 📩 iyilikpesindekos@adimadim.org\n\n"
             "_Unutma, her bir gereksiz sorgu, gerçekten yardıma ihtiyaç duyan bir başka STK’nın yanıta ulaşmasını geciktirebilir. Hassasiyetin için şimdiden teşekkürler._\n\n"
-            "*Evet, artık sorunu duyabilirim.*"
+            "**Evet, artık sorunu duyabilirim.**"
         )
         tg_send_message(chat_id, welcome_text, reply_to_message_id=reply_to_id)
             
@@ -1211,7 +1291,7 @@ def lambda_handler(event, context):
         session_delete(session_key)
         user_name = message.get('from', {}).get('first_name', '')
         new_text = (
-            f"Pekala {user_name} ...\n\n*Yeni sorunu alabilirim.*"
+            f"Pekala {user_name} ...\n\n**Yeni sorunu alabilirim.**"
         )
         tg_send_message(chat_id, new_text, reply_to_message_id=reply_to_id)
             
