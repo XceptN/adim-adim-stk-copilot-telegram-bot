@@ -254,8 +254,16 @@ def _redact_headers(h):
 
 
 # -------- Helpers: Telegram --------
+def strip_citation_lines(text):
+    """Remove lines that contain citation markers like 'Citation-'."""
+    import re
+    cleaned = re.sub(r'^.*Citation-.*$\n?', '', text, flags=re.MULTILINE)
+    return cleaned.strip()
+
 def tg_send_message(chat_id, text, reply_to_message_id=None):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+
+    text = strip_citation_lines(text)
 
     # Try with Markdown
     formatted_text = text.replace('**', '*').replace('__', '_')
