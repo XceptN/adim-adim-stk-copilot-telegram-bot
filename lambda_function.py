@@ -255,9 +255,11 @@ def _redact_headers(h):
 
 # -------- Helpers: Telegram --------
 def strip_citation_lines(text):
-    """Remove lines that contain citation markers like 'Citation-'."""
+    """Remove lines that contain citation markers like 'Citation-' and trailing single digits."""
     import re
     cleaned = re.sub(r'^.*Citation-.*$\n?', '', text, flags=re.MULTILINE)
+    # Remove single digit numbers at the end of lines
+    cleaned = re.sub(r'\s+\d\s*$', '', cleaned, flags=re.MULTILINE)
     return cleaned.strip()
 
 def tg_send_message(chat_id, text, reply_to_message_id=None):
