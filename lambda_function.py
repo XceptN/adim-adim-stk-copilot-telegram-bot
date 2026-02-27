@@ -267,16 +267,34 @@ def tg_send_message(chat_id, text, reply_to_message_id=None):
 
     text = strip_citation_lines(text)
 
-    # Try with Markdown
+    # Try with Markdown first
     formatted_text = text.replace('**', '*').replace('__', '_')
     payload = {"chat_id": chat_id, "text": formatted_text, "parse_mode": "Markdown"}
     if reply_to_message_id:
         payload["reply_to_message_id"] = reply_to_message_id
     
-    _, code, _ = http_post_json(url, payload)
-    debug_print(f"[TG] sendMessage status={code}")
-    info_print(f"[TG] Message sent to user: <{text}>")
-    return code == 200
+    try:
+        _, code, _ = http_post_json(url, payload)
+        debug_print(f"[TG] sendMessage (Markdown) status={code}")
+        if code == 200:
+            info_print(f"[TG] Message sent to user: <{text}>")
+            return True
+    except urllib.error.HTTPError as e:
+        debug_print(f"[TG] sendMessage Markdown failed ({e.code}), falling back to plain text")
+
+    # Fallback: send without parse_mode (plain text)
+    payload_plain = {"chat_id": chat_id, "text": text}
+    if reply_to_message_id:
+        payload_plain["reply_to_message_id"] = reply_to_message_id
+    
+    try:
+        _, code, _ = http_post_json(url, payload_plain)
+        debug_print(f"[TG] sendMessage (plain) status={code}")
+        info_print(f"[TG] Message sent to user: <{text}>")
+        return code == 200
+    except urllib.error.HTTPError as e:
+        error_print(f"[TG] sendMessage plain text also failed: {e.code}")
+        return False
 
 def tg_send_photo_by_url(chat_id, url_or_fileid, caption=None, reply_to_message_id=None):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
