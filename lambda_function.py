@@ -259,7 +259,7 @@ def strip_citation_lines(text):
     import re
     cleaned = re.sub(r'^.*Citation-.*$\n?', '', text, flags=re.MULTILINE)
     # Remove single digit numbers at the end of lines
-    cleaned = re.sub(r'\s+\d\s*$', '', cleaned, flags=re.MULTILINE)
+    cleaned = re.sub(r'\[\d\]', '', cleaned, flags=re.MULTILINE)
     return cleaned.strip()
 
 def tg_send_message(chat_id, text, reply_to_message_id=None):
