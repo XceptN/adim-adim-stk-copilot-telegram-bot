@@ -288,6 +288,13 @@ def tg_send_photo_by_url(chat_id, url_or_fileid, caption=None, reply_to_message_
     debug_print(f"[TG] sendPhoto status={code}")
     return code == 200
 
+def tg_send_chat_action(chat_id, action="typing"):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendChatAction"
+    payload = {"chat_id": chat_id, "action": action}
+    _, code, _ = http_post_json(url, payload)
+    debug_print(f"[TG] sendChatAction action={action} status={code}")
+    return code == 200
+
 def tg_get_file(file_id):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={urllib.parse.quote(file_id)}"
     debug_print(f"[TG] getFile file_id={file_id}")
@@ -920,7 +927,8 @@ def dl_poll_reply_text_and_attachments(token, conversation_id,
                                        backoff_factor=None,
                                        max_interval=None,
                                        user_id_prefix="tg-",
-                                       start_watermark=None):
+                                       start_watermark=None,
+                                       tg_chat_id=None):
     headers = {"Authorization": f"Bearer {token}"}
     url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conversation_id}/activities"
 
@@ -933,12 +941,19 @@ def dl_poll_reply_text_and_attachments(token, conversation_id,
     watermark = start_watermark
     replies = []
     attempt = 0
+    last_typing_time = 0  # Send typing action immediately on first iteration
 
     debug_print(f"[DL] poll replies (adaptive) conv={conversation_id} "
           f"max_wait={max_wait_seconds}s start_interval={interval}s backoff={factor} max_interval={max_interval}s")
 
     while time.time() < deadline:
         attempt += 1
+
+        # Send "typing" indicator every ~4 seconds (Telegram clears it after ~5s)
+        if tg_chat_id and time.time() - last_typing_time >= 4:
+            tg_send_chat_action(tg_chat_id, "typing")
+            last_typing_time = time.time()
+
         q = f"?watermark={urllib.parse.quote(watermark)}" if watermark else ""
         body, code, _ = http_get(url + q, headers, timeout=90)
         if code != 200:
@@ -1296,7 +1311,8 @@ def lambda_handler(event, context):
             token, conv_id,
             max_wait_seconds=DL_MAX_WAIT_SECONDS,
             start_watermark=watermark,
-            user_id_prefix=user_id
+            user_id_prefix=user_id,
+            tg_chat_id=chat_id
         )
 
         # Persist session so the next message continues this conversation
