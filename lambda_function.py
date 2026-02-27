@@ -293,6 +293,12 @@ def markdown_to_telegram_html(text):
     result = result.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
     
     # Step 3: Convert Markdown formatting to HTML
+    # Headings: ### h3, ## h2, # h1 -> bold (Telegram has no heading tags)
+    # Process in order: ### before ## before # to avoid partial matches
+    result = re.sub(r'^###\s+(.+)$', r'<b>\1</b>', result, flags=re.MULTILINE)
+    result = re.sub(r'^##\s+(.+)$', r'<b>\1</b>', result, flags=re.MULTILINE)
+    result = re.sub(r'^#\s+(.+)$', r'<b>\1</b>', result, flags=re.MULTILINE)
+    
     # Links: [text](url) -> <a href="url">text</a>
     result = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', result)
     
@@ -326,6 +332,10 @@ def markdown_to_telegram_html(text):
 
 def strip_markdown(text):
     """Remove Markdown formatting entirely for plain text fallback."""
+    # Remove headings markers
+    result = re.sub(r'^###\s+', '', text, flags=re.MULTILINE)
+    result = re.sub(r'^##\s+', '', result, flags=re.MULTILINE)
+    result = re.sub(r'^#\s+', '', result, flags=re.MULTILINE)
     # Remove fenced code block markers
     result = re.sub(r'```[\s\S]*?```', lambda m: m.group(0)[3:-3].strip(), text)
     # Remove inline code markers
