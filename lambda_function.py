@@ -298,7 +298,7 @@ def markdown_to_telegram_html(text):
     result = re.sub(r'^#\s+(.+)$', r'<b>\1</b>', result, flags=re.MULTILINE)
     
     # Bullet points: - item -> ✦ item
-    result = re.sub(r'^(\s*)- ', r'\1✦ ', result, flags=re.MULTILINE)
+    result = re.sub(r'^(\s*)- ', r'\1▸ ', result, flags=re.MULTILINE)
     
     # Links: [text](url) -> <a href="url">text</a>
     result = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', result)
