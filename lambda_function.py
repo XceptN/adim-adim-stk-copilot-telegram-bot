@@ -241,7 +241,6 @@ def http_post_multipart_copilot(url, activity_json, file_name, file_content, fil
         debug_print(f"[HTTP][POST-COPILOT][ERR] status={e.code} body={err_body}")
         return err_body, e.code, dict(e.headers or {})
 
-
 def _redact_headers(h):
     if not h: return {}
     redacted = {}
@@ -252,10 +251,9 @@ def _redact_headers(h):
             redacted[k] = v
     return redacted
 
-
 # -------- Helpers: Telegram --------
 def strip_citation_lines(text):
-    """Remove lines that contain citation markers like 'Citation-' and trailing single digits."""
+    """Remove lines that contain citation markers like 'Citation-' and citation references in [ ]."""
     import re
     cleaned = re.sub(r'^.*Citation-.*$\n?', '', text, flags=re.MULTILINE)
     # Remove single digit numbers at the end of lines
