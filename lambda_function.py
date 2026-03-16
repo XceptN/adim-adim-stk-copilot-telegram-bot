@@ -764,7 +764,7 @@ def dl_upload_image(token, conversation_id, filename, content_type, content_byte
             "name": "",
             "role": "user"
         },
-        "locale": "en-US",
+        "locale": "tr-TR",
         "localTimestamp": local_timestamp,
         "localTimezone": "UTC",
         "cci_bot_id": os.environ.get("CCI_BOT_ID", ""),
