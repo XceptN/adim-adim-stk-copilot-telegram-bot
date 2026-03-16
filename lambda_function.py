@@ -578,7 +578,7 @@ def dl_post_text(token, conversation_id, text, user_id):
             "name": "",
             "role": "user"
         },
-        "locale": "en-US",
+        "locale": "tr-TR",
         "localTimestamp": local_timestamp,
         "localTimezone": "Europe/Istanbul"
     }
