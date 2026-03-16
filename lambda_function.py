@@ -1151,7 +1151,8 @@ def dl_send_conversation_update(token, conversation_id, user_id):
             "id": user_id,
             "name": "",
             "role": "user"
-        }
+        },
+        "locale": "tr-TR"
     }
     
     debug_print(f"[DL] sending conversationUpdate conv={conversation_id}")
