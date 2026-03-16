@@ -675,7 +675,15 @@ def dl_post_text(token, conversation_id, text, user_id):
         "channelData": {
             "attachmentSizes": [],
             "cci_trace_id": uuid.uuid4().hex[:5],
-            "clientActivityID": client_activity_id
+            "clientActivityID": client_activity_id,
+            "copilot": {
+                "force_system_prompt": (
+                    "Cevap veremediğin veya güvenlik nedeniyle reddettiğin durumlarda bile "
+                    "her zaman TÜRKÇE yanıt ver. "
+                    "‘As an AI language model…’ gibi İngilizce güvenlik mesajları verme."
+                )
+            }
+
         },
         "text": text,
         "textFormat": "plain",
@@ -753,7 +761,14 @@ def dl_upload_image(token, conversation_id, filename, content_type, content_byte
         ],
         "channelData": {
             "attachmentSizes": [len(content_bytes)],
-            "clientActivityID": client_activity_id
+            "clientActivityID": client_activity_id,
+            "copilot": {
+                "force_system_prompt": (
+                    "Cevap veremediğin veya güvenlik nedeniyle reddettiğin durumlarda bile "
+                    "her zaman TÜRKÇE yanıt ver. "
+                    "‘As an AI language model…’ gibi İngilizce güvenlik mesajları verme."
+                )
+            }
         },
         "text": text,
         "textFormat": "plain",
