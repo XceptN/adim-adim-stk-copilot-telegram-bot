@@ -260,6 +260,128 @@ def strip_citation_lines(text):
     cleaned = re.sub(r'\[\d\]', '', cleaned, flags=re.MULTILINE)
     return cleaned.strip()
 
+# -------- English Refusal → Turkish Translation --------
+# Patterns that indicate an English-language safety/refusal response from the model
+# or from Copilot Studio's content moderation layer.
+# Each tuple: (compiled regex, Turkish replacement)
+# Order matters: more specific patterns first, broad catch-alls last.
+
+_ENGLISH_REFUSAL_PATTERNS = [
+    # --- Medical advice refusals ---
+    (re.compile(
+        r"(?:As an AI(?: language model)?|I'?m an AI(?: language model)?|As a language model)"
+        r"[^.]*?(?:cannot|can'?t|unable to|not able to)\s+provide\s+medical\s+advice.*",
+        re.IGNORECASE | re.DOTALL),
+     "Bir yapay zeka asistanı olarak tıbbi tavsiye veremem. "
+     "Bu konuda doğru bilgi, teşhis ve tedavi seçenekleri için lütfen bir sağlık "
+     "uzmanına (doktor, hemşire vb.) danışmanızı öneririm."),
+
+    # --- Legal advice refusals ---
+    (re.compile(
+        r"(?:As an AI|I'?m an AI|As a language model)"
+        r"[^.]*?(?:cannot|can'?t|unable to)\s+provide\s+legal\s+advice.*",
+        re.IGNORECASE | re.DOTALL),
+     "Bir yapay zeka asistanı olarak hukuki tavsiye veremem. "
+     "Bu konuda bir avukat veya hukuk danışmanına başvurmanızı öneririm."),
+
+    # --- Financial advice refusals ---
+    (re.compile(
+        r"(?:As an AI|I'?m an AI|As a language model)"
+        r"[^.]*?(?:cannot|can'?t|unable to)\s+provide\s+financial\s+advice.*",
+        re.IGNORECASE | re.DOTALL),
+     "Bir yapay zeka asistanı olarak mali tavsiye veremem. "
+     "Bu konuda bir mali müşavir veya finans uzmanına danışmanızı öneririm."),
+
+    # --- Generic "As an AI..." refusal (broad catch-all for any topic) ---
+    (re.compile(
+        r"(?:As an AI(?: language model)?|I'?m an AI(?: language model)?|As a language model),?\s+"
+        r"I\s+(?:cannot|can'?t|don'?t|am not able to|do not|should not|shouldn'?t|am unable to)\b.*",
+        re.IGNORECASE | re.DOTALL),
+     "Bir yapay zeka asistanı olarak bu konuda yardımcı olamıyorum. "
+     "Lütfen ilgili bir uzmana danışmanızı öneririm."),
+
+    # --- "I cannot/can't help with that" style ---
+    (re.compile(
+        r"^I\s+(?:cannot|can'?t|am unable to|'m unable to)\s+"
+        r"(?:help|assist|provide|offer|give)\s+(?:you\s+)?(?:with\s+)?(?:that|this|information on|advice).*",
+        re.IGNORECASE | re.DOTALL),
+     "Bu konuda size yardımcı olamıyorum. "
+     "Lütfen konuyla ilgili bir uzmana danışmanızı öneririm."),
+
+    # --- "I'm sorry, but I cannot..." ---
+    (re.compile(
+        r"^I'?m\s+sorry,?\s+but\s+I\s+(?:cannot|can'?t|am unable to|don'?t)\b.*",
+        re.IGNORECASE | re.DOTALL),
+     "Üzgünüm, ancak bu konuda yardımcı olamıyorum. "
+     "Lütfen konuyla ilgili bir uzmana başvurmanızı öneririm."),
+
+    # --- "I don't have the ability/capability/expertise to..." ---
+    (re.compile(
+        r"I\s+(?:don'?t|do not)\s+have\s+(?:the\s+)?(?:ability|capability|expertise|qualifications?|training)\s+to\b.*",
+        re.IGNORECASE | re.DOTALL),
+     "Bu konuda gerekli uzmanlığa sahip değilim. "
+     "Lütfen konuyla ilgili bir uzmana danışmanızı öneririm."),
+
+    # --- "It is not appropriate for me to..." / "It would be inappropriate..." ---
+    (re.compile(
+        r"(?:It\s+(?:is|would be)\s+(?:not\s+appropriate|inappropriate)\s+for\s+me\s+to|"
+        r"I\s+(?:should|shouldn'?t|must)\s+not)\b.*",
+        re.IGNORECASE | re.DOTALL),
+     "Bu konuda yorum yapmam uygun olmaz. "
+     "Lütfen konuyla ilgili bir uzmana danışmanızı öneririm."),
+
+    # --- "This is beyond my capabilities..." ---
+    (re.compile(
+        r"(?:This|That)\s+(?:is|goes)\s+beyond\s+(?:my|the)\s+(?:capabilities|scope|ability).*",
+        re.IGNORECASE | re.DOTALL),
+     "Bu konu yetkinlik alanımın dışında. "
+     "Lütfen konuyla ilgili bir uzmana başvurmanızı öneririm."),
+]
+
+# Quick pre-check keywords to avoid running all regexes on every message
+_REFUSAL_HINT_KEYWORDS = frozenset([
+    "as an ai", "i'm an ai", "i am an ai", "as a language model",
+    "i cannot", "i can't", "i'm sorry", "i am sorry",
+    "i don't have the", "i do not have the",
+    "not appropriate for me", "beyond my capabilities",
+    "unable to provide", "unable to assist", "unable to help",
+    "i'm unable", "i am unable",
+    "it is not appropriate", "it would be inappropriate",
+    "i should not", "i shouldn't",
+])
+
+
+def translate_english_refusal(text):
+    """
+    Detect English-language safety/refusal messages and replace with Turkish.
+
+    Returns the original text unchanged if no refusal pattern is detected.
+    Only triggers when the message *starts* with or is *dominated* by a
+    known English refusal pattern — normal English text mixed into a Turkish
+    conversation is left alone.
+    """
+    if not text or len(text) < 20:
+        return text
+
+    text_lower = text.lower()
+
+    # Fast path: skip regex if none of the hint keywords appear
+    if not any(kw in text_lower for kw in _REFUSAL_HINT_KEYWORDS):
+        return text
+
+    debug_print(f"[REFUSAL] Hint keyword matched, checking {len(_ENGLISH_REFUSAL_PATTERNS)} patterns...")
+
+    for pattern, turkish_replacement in _ENGLISH_REFUSAL_PATTERNS:
+        if pattern.search(text):
+            debug_print(f"[REFUSAL] Matched pattern: {pattern.pattern[:60]}...")
+            debug_print(f"[REFUSAL] Original ({len(text)} chars): {text[:120]}...")
+            debug_print(f"[REFUSAL] Replaced with Turkish")
+            return turkish_replacement
+
+    debug_print(f"[REFUSAL] No pattern matched, returning original text")
+    return text
+
+
 def markdown_to_telegram_html(text):
     """
     Convert standard Markdown (as returned by Copilot Studio) to Telegram-safe HTML.
@@ -1460,6 +1582,10 @@ def lambda_handler(event, context):
             debug_print(f"[REPLY] #{idx} text_len={len(r.get('text') or '')} atts={len(r.get('attachments') or [])} error_code={r.get('error_code')}")
             
             reply_text = r.get("text")
+            
+            # Translate English refusal/safety messages to Turkish
+            if reply_text:
+                reply_text = translate_english_refusal(reply_text)
             
             # Check for error in channelData first
             error_code = r.get("error_code")
