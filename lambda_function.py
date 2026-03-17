@@ -298,7 +298,7 @@ _ENGLISH_REFUSAL_PATTERNS = [
         r"I\s+(?:cannot|can'?t|don'?t|am not able to|do not|should not|shouldn'?t|am unable to)\b.*",
         re.IGNORECASE | re.DOTALL),
      "Bir yapay zeka asistanı olarak bu konuda yardımcı olamıyorum. "
-     "Lütfen ilgili bir uzmana danışmanızı öneririm."),
+     "Lütfen ilgili bir uzmana danışınız."),
 
     # --- "I cannot/can't help with that" style ---
     (re.compile(
@@ -306,21 +306,21 @@ _ENGLISH_REFUSAL_PATTERNS = [
         r"(?:help|assist|provide|offer|give)\s+(?:you\s+)?(?:with\s+)?(?:that|this|information on|advice).*",
         re.IGNORECASE | re.DOTALL),
      "Bu konuda size yardımcı olamıyorum. "
-     "Lütfen konuyla ilgili bir uzmana danışmanızı öneririm."),
+     "Lütfen konuyla ilgili bir uzmana danışınız."),
 
     # --- "I'm sorry, but I cannot..." ---
     (re.compile(
         r"^I'?m\s+sorry,?\s+but\s+I\s+(?:cannot|can'?t|am unable to|don'?t)\b.*",
         re.IGNORECASE | re.DOTALL),
-     "Üzgünüm, ancak bu konuda yardımcı olamıyorum. "
-     "Lütfen konuyla ilgili bir uzmana başvurmanızı öneririm."),
+     "Üzgünüm, bu konuda yardımcı olamıyorum. "
+     "Lütfen konuyla ilgili bir uzmana danışınız."),
 
     # --- "I don't have the ability/capability/expertise to..." ---
     (re.compile(
         r"I\s+(?:don'?t|do not)\s+have\s+(?:the\s+)?(?:ability|capability|expertise|qualifications?|training)\s+to\b.*",
         re.IGNORECASE | re.DOTALL),
      "Bu konuda gerekli uzmanlığa sahip değilim. "
-     "Lütfen konuyla ilgili bir uzmana danışmanızı öneririm."),
+     "Konuyla ilgili bir uzmana danışmanızı öneririm."),
 
     # --- "It is not appropriate for me to..." / "It would be inappropriate..." ---
     (re.compile(
@@ -328,14 +328,14 @@ _ENGLISH_REFUSAL_PATTERNS = [
         r"I\s+(?:should|shouldn'?t|must)\s+not)\b.*",
         re.IGNORECASE | re.DOTALL),
      "Bu konuda yorum yapmam uygun olmaz. "
-     "Lütfen konuyla ilgili bir uzmana danışmanızı öneririm."),
+     "Konuyla ilgili bir uzmana danışmanızı öneririm."),
 
     # --- "This is beyond my capabilities..." ---
     (re.compile(
         r"(?:This|That)\s+(?:is|goes)\s+beyond\s+(?:my|the)\s+(?:capabilities|scope|ability).*",
         re.IGNORECASE | re.DOTALL),
      "Bu konu yetkinlik alanımın dışında. "
-     "Lütfen konuyla ilgili bir uzmana başvurmanızı öneririm."),
+     "Konuyla ilgili bir uzmana başvurmanızı öneririm."),
 ]
 
 # Quick pre-check keywords to avoid running all regexes on every message
