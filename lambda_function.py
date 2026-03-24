@@ -382,6 +382,69 @@ def translate_english_refusal(text):
     return text
 
 
+def _markdown_table_to_cards(table_text):
+    """
+    Convert a Markdown pipe-table into Telegram-friendly HTML "cards".
+
+    Telegram HTML does not support <table>, so each data row is rendered as
+    a vertical mini-card with bold header labels:
+
+        <b>Etkinlik:</b> <a href="...">Efes Ultra Maratonu</a>
+        <b>Tarih:</b> 27–28–29 Mart 2026
+        <b>Parkurlar:</b> 6K, 12K, 27K, 42K, 61K, 120K
+
+    Markdown links inside cells ([text](url)) are converted to <a> tags.
+    All other content is HTML-escaped.
+    """
+    lines = [l for l in table_text.strip().split('\n') if l.strip()]
+    if len(lines) < 3:                    # need header + separator + ≥1 row
+        return table_text
+
+    # Parse header
+    headers = [h.strip() for h in lines[0].strip().strip('|').split('|')]
+    # lines[1] is the separator row — skip it
+    row_lines = lines[2:]
+
+    def _cell_to_html(cell):
+        """HTML-escape a cell value, converting [text](url) to <a> tags."""
+        parts = []
+        last = 0
+        for m in re.finditer(r'\[([^\]]+)\]\(([^)]+)\)', cell):
+            before = cell[last:m.start()]
+            parts.append(before.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'))
+            lt = m.group(1).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            lu = m.group(2).replace('&', '&amp;').replace('"', '&quot;')
+            parts.append(f'<a href="{lu}">{lt}</a>')
+            last = m.end()
+        tail = cell[last:]
+        parts.append(tail.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'))
+        return ''.join(parts)
+
+    cards = []
+    for row_line in row_lines:
+        cells = [c.strip() for c in row_line.strip().strip('|').split('|')]
+        card_parts = []
+        for idx, hdr in enumerate(headers):
+            val = cells[idx] if idx < len(cells) else ''
+            if val:
+                hdr_html = hdr.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                card_parts.append(f"  <b>{hdr_html}:</b> {_cell_to_html(val)}")
+        if card_parts:
+            cards.append('\n'.join(card_parts))
+
+    return '\n\n'.join(cards)
+
+
+# Regex: matches a full Markdown pipe-table block (header + separator + data rows)
+_MD_TABLE_RE = re.compile(
+    r'^'
+    r'(\|.+\|)[ \t]*\n'                         # header row
+    r'(\|[ \t]*[-:]+[-| :\t]*\|)[ \t]*\n'       # separator row
+    r'((?:\|.+\|[ \t]*\n?)+)',                   # one or more data rows
+    re.MULTILINE,
+)
+
+
 def markdown_to_telegram_html(text):
     """
     Convert standard Markdown (as returned by Copilot Studio) to Telegram-safe HTML.
@@ -408,6 +471,21 @@ def markdown_to_telegram_html(text):
     result = re.sub(r'```([\s\S]*?)```', protect, text)
     # Protect inline code (`...`)
     result = re.sub(r'`([^`]+)`', protect, result)
+    
+    # Step 1b: Detect Markdown tables, convert to HTML cards, and protect
+    # Tables are converted by _markdown_table_to_cards which handles its own
+    # HTML-escaping and link conversion, so the result must be shielded from
+    # the generic escaping & markdown passes that follow.
+    _TABLE_MARKER = "\x01TABLE\x01"
+    
+    def protect_table(match):
+        html = _markdown_table_to_cards(match.group(0))
+        key = f"\x00PROTECTED{counter[0]}\x00"
+        counter[0] += 1
+        protected[key] = _TABLE_MARKER + html   # marker so restore knows it's final HTML
+        return key
+    
+    result = _MD_TABLE_RE.sub(protect_table, result)
     
     # Step 2: Escape HTML entities in unprotected text
     result = result.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
@@ -437,9 +515,12 @@ def markdown_to_telegram_html(text):
     # Strikethrough: ~~text~~ -> <s>text</s>
     result = re.sub(r'~~(.+?)~~', r'<s>\1</s>', result)
     
-    # Step 4: Restore protected code blocks with HTML tags
+    # Step 4: Restore protected blocks
     for key, original in protected.items():
-        if original.startswith('```'):
+        if original.startswith(_TABLE_MARKER):
+            # Already final HTML produced by _markdown_table_to_cards
+            replacement = original[len(_TABLE_MARKER):]
+        elif original.startswith('```'):
             code_content = original[3:-3].strip()
             # Escape HTML inside code
             code_content = code_content.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
@@ -455,6 +536,27 @@ def markdown_to_telegram_html(text):
 
 def strip_markdown(text):
     """Remove Markdown formatting entirely for plain text fallback."""
+    # Convert Markdown tables to plain-text card layout
+    def _table_to_plain(match):
+        lines = [l for l in match.group(0).strip().split('\n') if l.strip()]
+        if len(lines) < 3:
+            return match.group(0)
+        headers = [h.strip() for h in lines[0].strip().strip('|').split('|')]
+        cards = []
+        for row_line in lines[2:]:
+            cells = [c.strip() for c in row_line.strip().strip('|').split('|')]
+            parts = []
+            for i, hdr in enumerate(headers):
+                val = cells[i] if i < len(cells) else ''
+                if val:
+                    # Convert [text](url) to "text (url)"
+                    val = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'\1 (\2)', val)
+                    parts.append(f"  {hdr}: {val}")
+            if parts:
+                cards.append('\n'.join(parts))
+        return '\n\n'.join(cards)
+
+    result = _MD_TABLE_RE.sub(_table_to_plain, text)
     # Remove headings markers
     result = re.sub(r'^###\s+', '', text, flags=re.MULTILINE)
     result = re.sub(r'^##\s+', '', result, flags=re.MULTILINE)
@@ -462,7 +564,7 @@ def strip_markdown(text):
     # Bullet points: - item -> • item
     result = re.sub(r'^- ', '• ', result, flags=re.MULTILINE)
     # Remove fenced code block markers
-    result = re.sub(r'```[\s\S]*?```', lambda m: m.group(0)[3:-3].strip(), text)
+    result = re.sub(r'```[\s\S]*?```', lambda m: m.group(0)[3:-3].strip(), result)
     # Remove inline code markers
     result = re.sub(r'`([^`]+)`', r'\1', result)
     # Convert links to "text (url)" format
