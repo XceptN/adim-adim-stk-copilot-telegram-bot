@@ -380,6 +380,19 @@ def translate_english_refusal(text):
     return text
 
 
+def _parse_markdown_table(table_text):
+    """Parse a Markdown pipe-table, returning (headers, row_cells_list) or None if malformed."""
+    lines = [l for l in table_text.strip().split('\n') if l.strip()]
+    if len(lines) < 3:
+        return None
+    headers = [h.strip() for h in lines[0].strip().strip('|').split('|')]
+    rows = [
+        [c.strip() for c in row.strip().strip('|').split('|')]
+        for row in lines[2:]
+    ]
+    return headers, rows
+
+
 def _markdown_table_to_cards(table_text):
     """
     Convert a Markdown pipe-table into Telegram-friendly HTML "cards".
@@ -394,14 +407,10 @@ def _markdown_table_to_cards(table_text):
     Markdown links inside cells ([text](url)) are converted to <a> tags.
     All other content is HTML-escaped.
     """
-    lines = [l for l in table_text.strip().split('\n') if l.strip()]
-    if len(lines) < 3:                    # need header + separator + ≥1 row
+    parsed = _parse_markdown_table(table_text)
+    if not parsed:
         return table_text
-
-    # Parse header
-    headers = [h.strip() for h in lines[0].strip().strip('|').split('|')]
-    # lines[1] is the separator row — skip it
-    row_lines = lines[2:]
+    headers, rows = parsed
 
     def _cell_to_html(cell):
         """HTML-escape a cell value, converting [text](url) to <a> tags."""
@@ -419,8 +428,7 @@ def _markdown_table_to_cards(table_text):
         return ''.join(parts)
 
     cards = []
-    for row_line in row_lines:
-        cells = [c.strip() for c in row_line.strip().strip('|').split('|')]
+    for cells in rows:
         card_parts = []
         for idx, hdr in enumerate(headers):
             val = cells[idx] if idx < len(cells) else ''
@@ -536,18 +544,16 @@ def strip_markdown(text):
     """Remove Markdown formatting entirely for plain text fallback."""
     # Convert Markdown tables to plain-text card layout
     def _table_to_plain(match):
-        lines = [l for l in match.group(0).strip().split('\n') if l.strip()]
-        if len(lines) < 3:
+        parsed = _parse_markdown_table(match.group(0))
+        if not parsed:
             return match.group(0)
-        headers = [h.strip() for h in lines[0].strip().strip('|').split('|')]
+        headers, rows = parsed
         cards = []
-        for row_line in lines[2:]:
-            cells = [c.strip() for c in row_line.strip().strip('|').split('|')]
+        for cells in rows:
             parts = []
             for i, hdr in enumerate(headers):
                 val = cells[i] if i < len(cells) else ''
                 if val:
-                    # Convert [text](url) to "text (url)"
                     val = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'\1 (\2)', val)
                     parts.append(f"  {hdr}: {val}")
             if parts:
@@ -883,14 +889,24 @@ def dl_get_or_resume_conversation(session_key):
     debug_print(f"[DL] New conversation started conv_id={conv_id}")
     return token, conv_id, None, True
 
+_FORCE_SYSTEM_PROMPT = (
+    "Cevap veremediğin veya güvenlik nedeniyle reddettiğin durumlarda bile "
+    "her zaman TÜRKÇE yanıt ver. "
+    "'As an AI language model…' gibi İngilizce güvenlik mesajları verme."
+)
+
+
+def _format_timestamp():
+    now = datetime.now(timezone.utc)
+    return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}+00:00"
+
+
 def dl_post_text(token, conversation_id, text, user_id):
     headers = {"Authorization": f"Bearer {token}"}
     url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conversation_id}/activities"
-    
+
     client_activity_id = uuid.uuid4().hex[:10]
-    now = datetime.now(timezone.utc)
-    # Match Demo Website timestamp format with local timezone offset
-    local_timestamp = now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}+00:00"
+    local_timestamp = _format_timestamp()
     
     payload = {
         "attachments": [],
@@ -898,14 +914,7 @@ def dl_post_text(token, conversation_id, text, user_id):
             "attachmentSizes": [],
             "cci_trace_id": uuid.uuid4().hex[:5],
             "clientActivityID": client_activity_id,
-            "copilot": {
-                "force_system_prompt": (
-                    "Cevap veremediğin veya güvenlik nedeniyle reddettiğin durumlarda bile "
-                    "her zaman TÜRKÇE yanıt ver. "
-                    "‘As an AI language model…’ gibi İngilizce güvenlik mesajları verme."
-                )
-            }
-
+            "copilot": {"force_system_prompt": _FORCE_SYSTEM_PROMPT},
         },
         "text": text,
         "textFormat": "plain",
@@ -914,14 +923,10 @@ def dl_post_text(token, conversation_id, text, user_id):
         "cci_tenant_id": os.environ.get("CCI_TENANT_ID", ""),
         "cci_environment_id": os.environ.get("CCI_ENVIRONMENT_ID", ""),
         "channelId": "webchat",
-        "from": {
-            "id": user_id,
-            "name": "",
-            "role": "user"
-        },
+        "from": {"id": user_id, "name": "", "role": "user"},
         "locale": "tr-TR",
         "localTimestamp": local_timestamp,
-        "localTimezone": "Europe/Istanbul"
+        "localTimezone": "Europe/Istanbul",
     }
     
     debug_print(f"[DL] post text conv={conversation_id} text_len={len(text)}")
@@ -966,47 +971,27 @@ def dl_upload_image(token, conversation_id, filename, content_type, content_byte
     thumbnail_b64 = base64.b64encode(content_bytes).decode('ascii')
     thumbnail_url = f"data:{content_type};base64,{thumbnail_b64}"
     
-    # 5) Timestamps
-    now = datetime.now(timezone.utc)
-    local_timestamp = now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}+00:00"
-    
-    # 6) Activity JSON - Copilot Studio format
+    # 5) Activity JSON - Copilot Studio format
     client_activity_id = uuid.uuid4().hex[:12]
-    
+
     activity = {
-        "attachments": [
-            {
-                "contentType": content_type,
-                "name": filename,
-                "thumbnailUrl": thumbnail_url
-            }
-        ],
+        "attachments": [{"contentType": content_type, "name": filename, "thumbnailUrl": thumbnail_url}],
         "channelData": {
             "attachmentSizes": [len(content_bytes)],
             "clientActivityID": client_activity_id,
-            "copilot": {
-                "force_system_prompt": (
-                    "Cevap veremediğin veya güvenlik nedeniyle reddettiğin durumlarda bile "
-                    "her zaman TÜRKÇE yanıt ver. "
-                    "‘As an AI language model…’ gibi İngilizce güvenlik mesajları verme."
-                )
-            }
+            "copilot": {"force_system_prompt": _FORCE_SYSTEM_PROMPT},
         },
         "text": text,
         "textFormat": "plain",
         "type": "message",
         "channelId": "webchat",
-        "from": {
-            "id": user_id,
-            "name": "",
-            "role": "user"
-        },
+        "from": {"id": user_id, "name": "", "role": "user"},
         "locale": "tr-TR",
-        "localTimestamp": local_timestamp,
+        "localTimestamp": _format_timestamp(),
         "localTimezone": "UTC",
         "cci_bot_id": os.environ.get("CCI_BOT_ID", ""),
         "cci_tenant_id": os.environ.get("CCI_TENANT_ID", ""),
-        "cci_environment_id": os.environ.get("CCI_ENVIRONMENT_ID", "")        
+        "cci_environment_id": os.environ.get("CCI_ENVIRONMENT_ID", ""),
     }
     
     activity_json = json.dumps(activity, ensure_ascii=False)
@@ -1029,40 +1014,6 @@ def dl_upload_image(token, conversation_id, filename, content_type, content_byte
 
     if c_up in (200, 201):
         debug_print(f"[DL] upload SUCCESS! status={c_up}")
-        
-        # Verification
-        time.sleep(0.5)
-        b_act, c_act, _ = http_get_json(
-            f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}/activities",
-            headers=headers, timeout=30
-        )
-        acts = json.loads(b_act.decode("utf-8"))
-        
-        debug_print(f"[DL] Total activities: {len(acts.get('activities', []))}")
-        
-        if acts.get("activities"):
-            user_acts = [a for a in acts["activities"] if a.get("from", {}).get("id", "").startswith("tg-")]
-            
-            if user_acts:
-                last_user = user_acts[-1]
-                debug_print(f"[DL] === USER MESSAGE AS RECEIVED BY BOT ===")
-                debug_print(f"[DL] text: '{last_user.get('text', '')}'")
-                
-                atts = last_user.get("attachments") or []
-                debug_print(f"[DL] attachments count: {len(atts)}")
-                
-                if atts:
-                    att = atts[0]
-                    ct = att.get('contentType', '')
-                    curl = att.get('contentUrl', '')
-                    debug_print(f"[DL] ✓ attachment contentType: {ct}")
-                    if curl.startswith('data:'):
-                        debug_print(f"[DL] ✓ attachment contentUrl: data URL (length: {len(curl)})")
-                    elif "bot-framework-default-placeholder" in curl:
-                        debug_print(f"[DL] ⚠️ PROBLEM: Still getting placeholder URL!")
-                    else:
-                        debug_print(f"[DL] ✓ attachment contentUrl: {curl[:100]}...")
-        
         return conv_id
     
     debug_print(f"[DL][ERR] upload failed status={c_up} body={b_up}")
@@ -1324,39 +1275,22 @@ def dl_poll_reply_text_and_attachments(token, conversation_id,
             from_id = act.get("from", {}).get("id", "")
             is_from_user = from_id.startswith(user_id_prefix)
             
-            if act.get("type") == "message" and not is_from_user:
-                text = act.get("text")
-                atts = act.get("attachments") or []
-                
-                # Extract error information
+            act_type = act.get("type")
+            if act_type in ("message", "event") and not is_from_user:
                 error_code, error_message = extract_error_message_from_activity(act)
-                
-                debug_print(f"[DL] bot message text_len={len(text or '')} attachments={len(atts)} error_code={error_code}")
-                
-                reply_data = {
-                    "text": text, 
+                if act_type == "event" and not (error_code or error_message):
+                    continue
+                text = act.get("text") if act_type == "message" else None
+                atts = act.get("attachments") or [] if act_type == "message" else []
+                debug_print(f"[DL] bot {act_type} text_len={len(text or '')} attachments={len(atts)} error_code={error_code}")
+                replies.append({
+                    "text": text,
                     "attachments": atts,
                     "error_code": error_code,
                     "error_message": error_message,
                     "conversation_id": conversation_id,
-                    "channel_data": act.get("channelData", {})  # Include full channelData for debugging
-                }
-                replies.append(reply_data)
-            
-            # Also check for event activities that might contain errors
-            elif act.get("type") == "event" and not is_from_user:
-                error_code, error_message = extract_error_message_from_activity(act)
-                if error_code or error_message:
-                    debug_print(f"[DL] Found error in event activity: code={error_code}, message={error_message}")
-                    reply_data = {
-                        "text": None,
-                        "attachments": [],
-                        "error_code": error_code,
-                        "error_message": error_message,
-                        "conversation_id": conversation_id,
-                        "channel_data": act.get("channelData", {})
-                    }
-                    replies.append(reply_data)
+                    "channel_data": act.get("channelData", {}),
+                })
 
         if replies:
             debug_print(f"[DL] poll done replies={len(replies)} in_attempts={attempt}")
@@ -1449,10 +1383,6 @@ def lambda_handler(event, context):
         return {"statusCode": 200, "body": "duplicate"}
 
     message = (update.get("message") or update.get("edited_message")) or {}
-    
-    debug_print(f"Complete message structure:")
-    debug_print(f"message = {json.dumps(message, ensure_ascii=False, indent=2)}")
-    
     chat = message.get("chat") or {}
     chat_id = chat.get("id")
     chat_type = chat.get("type", "private")
@@ -1503,14 +1433,11 @@ def lambda_handler(event, context):
             break
 
 
-    text = message.get('text', '')
+    text = message.get(‘text’, ‘’)
+    user_name = message.get(‘from’, {}).get(‘first_name’, ‘’)
 
-    # Handle /bot command without image
-    if text and text in ('/bot', f'/bot@{TELEGRAM_BOT_USERNAME}'):
-        # Clear existing session so the user starts fresh
-        session_delete(session_key)
-        user_name = message.get('from', {}).get('first_name', '')
-        welcome_text = (
+    _CMD_WELCOME = {
+        ‘/bot’: (
             f"Merhaba {user_name}! 👋. Aramıza Hoş Geldin! ✨\n\n"
             "İPK Platformu üzerinden yürütülen yardımseverlik koşularına ve elbette yüzme yarışlarına dair sorularına Yapay Zeka desteğiyle anında yanıt bulmak için bana ulaştığını varsayıyorum.\n"
             "Dayanışma ekosistemimizin verimliliğini sürekli kılmak üzere lütfen aşağıdaki kuralları dikkate alalım:\n"
@@ -1521,42 +1448,23 @@ def lambda_handler(event, context):
             "👉 **Teknik Destek:** Sana yanıt veremediğim veya sistemsel bir sorun yaşadığın durumlarda mailini bekliyoruz: 📩 iyilikpesindekos@adimadim.org\n\n"
             "_Unutma, her bir gereksiz sorgu, gerçekten yardıma ihtiyaç duyan bir başka STK’nın yanıta ulaşmasını geciktirebilir. Hassasiyetin için şimdiden teşekkürler._\n\n"
             "**Evet, artık sorunu duyabilirim.**"
-        )
-        tg_send_message(chat_id, welcome_text, reply_to_message_id=reply_to_id)
-            
-        return {
-            'statusCode': 200,
-            'body': json.dumps({'status': 'ok'})
-        }
+        ),
+        ‘/yeni’: f"Pekala {user_name} ...\n\n**Yeni sorunu alabilirim.**",
+    }
 
-    # /bot with following query without image
-    if text and text.startswith('/bot'):
+    for cmd in (‘/bot’, ‘/yeni’):
+        if not text or not text.startswith(cmd):
+            continue
+        exact_variants = {cmd, f’{cmd}@{TELEGRAM_BOT_USERNAME}’}
+        if text in exact_variants:
+            session_delete(session_key)
+            tg_send_message(chat_id, _CMD_WELCOME[cmd], reply_to_message_id=reply_to_id)
+            return {‘statusCode’: 200, ‘body’: json.dumps({‘status’: ‘ok’})}
+        # prefix case: /bot <query> or /yeni <query>
         session_delete(session_key)
-        cleaned_text = text.removeprefix('/bot')
-        debug_print(f"[GROUP] Using cleaned text: '{cleaned_text}' (original: '{text}')")
-        message["text"] = cleaned_text
-
-    # Handle /yeni command without image
-    if text and text in ('/yeni', f'/yeni@{TELEGRAM_BOT_USERNAME}'):
-        # Clear existing session so the user starts fresh
-        session_delete(session_key)
-        user_name = message.get('from', {}).get('first_name', '')
-        new_text = (
-            f"Pekala {user_name} ...\n\n**Yeni sorunu alabilirim.**"
-        )
-        tg_send_message(chat_id, new_text, reply_to_message_id=reply_to_id)
-            
-        return {
-            'statusCode': 200,
-            'body': json.dumps({'status': 'ok'})
-        }
-
-    # /yeni with following query without image
-    if text and text.startswith('/yeni'):
-        session_delete(session_key)
-        cleaned_text = text.removeprefix('/yeni')
-        debug_print(f"[GROUP] Using cleaned text: '{cleaned_text}' (original: '{text}')")
-        message["text"] = cleaned_text    
+        message[‘text’] = text.removeprefix(cmd).strip()
+        debug_print(f"[CMD] stripped ‘{cmd}’ prefix: ‘{message[‘text’]}’ (original: ‘{text}’)")
+        break
 
 
     caption = message.get("caption")
@@ -1636,7 +1544,7 @@ def lambda_handler(event, context):
             )
             sent_image = True
 
-        elif doc and isinstance(doc, dict) and str(doc.get("mime_type","")).startswith("image/"):
+        elif is_image_doc:
             debug_print(f"[FLOW] document detected mime={doc.get('mime_type', '')}")
             conv_id = _download_and_upload_image(
                 token, conv_id, doc["file_id"], f"image_{int(time.time())}", caption, user_id
