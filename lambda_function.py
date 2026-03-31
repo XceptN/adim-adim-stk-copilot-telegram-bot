@@ -14,7 +14,6 @@ import uuid
 import random
 import re
 from datetime import datetime, timezone
-from wsgiref import headers
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 REQUIRE_TG_SECRET  = os.environ.get("REQUIRE_TG_SECRET", "false").lower() == "true"
@@ -254,7 +253,6 @@ def _redact_headers(h):
 # -------- Helpers: Telegram --------
 def strip_citation_lines(text):
     """Remove lines that contain citation markers like 'Citation-' and citation references in [ ]."""
-    import re
     cleaned = re.sub(r'^.*Citation-.*$\n?', '', text, flags=re.MULTILINE)
     # Remove single digit numbers at the end of lines
     cleaned = re.sub(r'\[\d\]', '', cleaned, flags=re.MULTILINE)
@@ -558,7 +556,7 @@ def strip_markdown(text):
 
     result = _MD_TABLE_RE.sub(_table_to_plain, text)
     # Remove headings markers
-    result = re.sub(r'^###\s+', '', text, flags=re.MULTILINE)
+    result = re.sub(r'^###\s+', '', result, flags=re.MULTILINE)
     result = re.sub(r'^##\s+', '', result, flags=re.MULTILINE)
     result = re.sub(r'^#\s+', '', result, flags=re.MULTILINE)
     # Bullet points: - item -> • item
@@ -1376,6 +1374,18 @@ def dl_poll_reply_text_and_attachments(token, conversation_id,
     debug_print("[DL] poll timeout/no replies (adaptive)")
     return replies, watermark
 
+def _download_and_upload_image(token, conv_id, file_id, fallback_filename, caption, user_id):
+    """Download a Telegram file and upload it to the Direct Line conversation."""
+    download_url, file_path = tg_get_file(file_id)
+    img_bytes, content_type = tg_download_file(download_url)
+    if not content_type:
+        content_type = mimetypes.guess_type(file_path)[0] or "image/jpeg"
+    filename = os.path.basename(file_path) or fallback_filename
+    instruction = caption or DEFAULT_PROMPT
+    debug_print(f"[FLOW] Sending image WITH instruction: '{instruction}'")
+    return dl_upload_image(token, conv_id, filename, content_type, img_bytes, user_id, instruction)
+
+
 def dl_send_conversation_update(token, conversation_id, user_id):
     """Send conversationUpdate to trigger Copilot Studio's greeting/init topics."""
     headers = {"Authorization": f"Bearer {token}"}
@@ -1422,9 +1432,8 @@ def lambda_handler(event, context):
 
     raw = event.get("body") or "{}"
     if event.get("isBase64Encoded"):
-        import base64 as b64
         debug_print("[INVOKE] decoding base64 body")
-        raw = b64.b64decode(raw).decode("utf-8")
+        raw = base64.b64decode(raw).decode("utf-8")
 
     try:
         update = json.loads(raw)
@@ -1484,25 +1493,14 @@ def lambda_handler(event, context):
     # Check messages with images for /bot or /yeni commands in caption
     caption = message.get('caption', '')
 
-    # /bot with following query with image
-    if caption and caption.startswith('/bot'):
-        session_delete(session_key)
-        cleaned_caption = caption.removeprefix('/bot')
-        if not cleaned_caption:
-            cleaned_caption = DEFAULT_PROMPT
-        debug_print(f"[GROUP] Using cleaned caption: '{cleaned_caption}' (original: '{caption}')")
-        message["caption"] = cleaned_caption
-        message["text"] = cleaned_caption  
-
-    # /yeni with following query with image
-    if caption and caption.startswith('/yeni'):
-        session_delete(session_key)
-        cleaned_caption = caption.removeprefix('/yeni')
-        if not cleaned_caption:
-            cleaned_caption = DEFAULT_PROMPT
-        debug_print(f"[GROUP] Using cleaned caption: '{cleaned_caption}' (original: '{caption}')")
-        message["caption"] = cleaned_caption
-        message["text"] = cleaned_caption
+    for cmd in ('/bot', '/yeni'):
+        if caption and caption.startswith(cmd):
+            session_delete(session_key)
+            cleaned_caption = caption.removeprefix(cmd).strip() or DEFAULT_PROMPT
+            debug_print(f"[GROUP] Using cleaned caption: '{cleaned_caption}' (original: '{caption}')")
+            message["caption"] = cleaned_caption
+            message["text"] = cleaned_caption
+            break
 
 
     text = message.get('text', '')
@@ -1633,30 +1631,16 @@ def lambda_handler(event, context):
         if photo_sizes:
             file_id = photo_sizes[-1]["file_id"]
             debug_print(f"[FLOW] photo detected file_id={file_id}")
-            download_url, file_path = tg_get_file(file_id)
-            img_bytes, content_type = tg_download_file(download_url)
-            if not content_type:
-                content_type = mimetypes.guess_type(file_path)[0] or "image/jpeg"
-            filename = os.path.basename(file_path) or f"photo_{int(time.time())}.jpg"
-            
-            instruction = caption or DEFAULT_PROMPT
-            debug_print(f"[FLOW] Sending image WITH instruction: '{instruction}'")
-            conv_id = dl_upload_image(token, conv_id, filename, content_type, img_bytes, user_id, instruction)
+            conv_id = _download_and_upload_image(
+                token, conv_id, file_id, f"photo_{int(time.time())}.jpg", caption, user_id
+            )
             sent_image = True
 
         elif doc and isinstance(doc, dict) and str(doc.get("mime_type","")).startswith("image/"):
-            mime = doc.get("mime_type", "")
-            debug_print(f"[FLOW] document detected mime={mime}")
-            file_id = doc["file_id"]
-            download_url, file_path = tg_get_file(file_id)
-            img_bytes, content_type = tg_download_file(download_url)
-            if not content_type:
-                content_type = mimetypes.guess_type(file_path)[0] or "image/jpeg"
-            filename = os.path.basename(file_path) or f"image_{int(time.time())}"
-            
-            instruction = caption or DEFAULT_PROMPT
-            debug_print(f"[FLOW] Sending document image WITH instruction: '{instruction}'")
-            conv_id = dl_upload_image(token, conv_id, filename, content_type, img_bytes, user_id, instruction)
+            debug_print(f"[FLOW] document detected mime={doc.get('mime_type', '')}")
+            conv_id = _download_and_upload_image(
+                token, conv_id, doc["file_id"], f"image_{int(time.time())}", caption, user_id
+            )
             sent_image = True
 
         # Poll for replies — use watermark from session to skip old messages
