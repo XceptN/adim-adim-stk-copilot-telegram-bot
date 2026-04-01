@@ -1433,11 +1433,11 @@ def lambda_handler(event, context):
             break
 
 
-    text = message.get(‘text’, ‘’)
-    user_name = message.get(‘from’, {}).get(‘first_name’, ‘’)
+    text = message.get('text', '')
+    user_name = message.get('from', {}).get('first_name', '')
 
     _CMD_WELCOME = {
-        ‘/bot’: (
+        '/bot': (
             f"Merhaba {user_name}! 👋. Aramıza Hoş Geldin! ✨\n\n"
             "İPK Platformu üzerinden yürütülen yardımseverlik koşularına ve elbette yüzme yarışlarına dair sorularına Yapay Zeka desteğiyle anında yanıt bulmak için bana ulaştığını varsayıyorum.\n"
             "Dayanışma ekosistemimizin verimliliğini sürekli kılmak üzere lütfen aşağıdaki kuralları dikkate alalım:\n"
@@ -1446,24 +1446,24 @@ def lambda_handler(event, context):
             "👉 **Sorumluluk sahibi olmak önemli:** Yaptığınız iş kolaylaşsın diye buradayım. Spesifik bir parkurda seninle yürümek hoşuma gider. Bana herhangi bir yapay zeka aracı gibi davranmaz, içini döküp, rahatlamak için fıkra filan istemezsen sevinirim. Yoğun kampanya dönemlerinde herkesin mutlaka bir sorusu olacaktır; kimseyi kuyrukta bekletmeyelim.\n"
             "👉 **Teyit şart 🔍:** Yanıtlar bazen hatalı bilgi içerebilir; elimdeki dokümanları tarayarak bir şeyler yazıyorum ve bazen benim de kafam karışabiliyor. Kritik kararlardan önce bilgileri teyit etmeyi unutma.\n"
             "👉 **Teknik Destek:** Sana yanıt veremediğim veya sistemsel bir sorun yaşadığın durumlarda mailini bekliyoruz: 📩 iyilikpesindekos@adimadim.org\n\n"
-            "_Unutma, her bir gereksiz sorgu, gerçekten yardıma ihtiyaç duyan bir başka STK’nın yanıta ulaşmasını geciktirebilir. Hassasiyetin için şimdiden teşekkürler._\n\n"
+            "_Unutma, her bir gereksiz sorgu, gerçekten yardıma ihtiyaç duyan bir başka STK'nın yanıta ulaşmasını geciktirebilir. Hassasiyetin için şimdiden teşekkürler._\n\n"
             "**Evet, artık sorunu duyabilirim.**"
         ),
-        ‘/yeni’: f"Pekala {user_name} ...\n\n**Yeni sorunu alabilirim.**",
+        '/yeni': f"Pekala {user_name} ...\n\n**Yeni sorunu alabilirim.**",
     }
 
-    for cmd in (‘/bot’, ‘/yeni’):
+    for cmd in ('/bot', '/yeni'):
         if not text or not text.startswith(cmd):
             continue
-        exact_variants = {cmd, f’{cmd}@{TELEGRAM_BOT_USERNAME}’}
+        exact_variants = {cmd, f'{cmd}@{TELEGRAM_BOT_USERNAME}'}
         if text in exact_variants:
             session_delete(session_key)
             tg_send_message(chat_id, _CMD_WELCOME[cmd], reply_to_message_id=reply_to_id)
-            return {‘statusCode’: 200, ‘body’: json.dumps({‘status’: ‘ok’})}
+            return {'statusCode': 200, 'body': json.dumps({'status': 'ok'})}
         # prefix case: /bot <query> or /yeni <query>
         session_delete(session_key)
-        message[‘text’] = text.removeprefix(cmd).strip()
-        debug_print(f"[CMD] stripped ‘{cmd}’ prefix: ‘{message[‘text’]}’ (original: ‘{text}’)")
+        message['text'] = text.removeprefix(cmd).strip()
+        debug_print(f"[CMD] stripped '{cmd}' prefix: '{message['text']}' (original: '{text}')")
         break
 
 
