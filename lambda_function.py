@@ -334,6 +334,14 @@ _ENGLISH_REFUSAL_PATTERNS = [
         re.IGNORECASE | re.DOTALL),
      "Bu konu yetkinlik alanımın dışında. "
      "Konuyla ilgili bir uzmana başvurmanızı öneririm."),
+
+    # --- High demand / capacity error from the backend ---
+    (re.compile(
+        r"(?:The\s+system\s+is\s+currently\s+experiencing\s+high\s+demand|"
+        r"currently\s+experiencing\s+high\s+demand).*",
+        re.IGNORECASE | re.DOTALL),
+     "İlgili yapay zeka modeli şu anda yoğun bir şekilde kullanılmaktadır. "
+     "Lütfen daha sonra tekrar deneyiniz."),
 ]
 
 # Quick pre-check keywords to avoid running all regexes on every message
@@ -346,6 +354,7 @@ _REFUSAL_HINT_KEYWORDS = frozenset([
     "i'm unable", "i am unable",
     "it is not appropriate", "it would be inappropriate",
     "i should not", "i shouldn't",
+    "experiencing high demand",
 ])
 
 
