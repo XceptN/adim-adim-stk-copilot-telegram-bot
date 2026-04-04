@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# extract_conversations.sh  v4
+# extract_conversations.sh  v5
 # Adım Adım STK Copilot Telegram Bot — CloudWatch log'larından konuşma geçmişi çeker
 #
 # Kullanım:
@@ -17,6 +17,7 @@
 set -euo pipefail
 
 PROFILE="${AWS_PROFILE:-adimadim}"
+REGION="${AWS_REGION:-eu-north-1}"
 LOG_GROUP="/aws/lambda/adim-adim-stk-copilot-telegram-bot"
 OUTPUT_DIR="/tmp/tg-bot-logs"
 mkdir -p "$OUTPUT_DIR"
@@ -53,10 +54,11 @@ MODE_LABEL="kısa"
 $FULL_MODE && MODE_LABEL="TAM YANITLAR"
 
 echo "══════════════════════════════════════════════════════════════"
-echo "  Adım Adım STK Bot — Konuşma Geçmişi Çıkarıcı  (v4)"
+echo "  Adım Adım STK Bot — Konuşma Geçmişi Çıkarıcı  (v5)"
 echo "  Tarih aralığı : ${LABEL}"
 echo "  Mod           : ${MODE_LABEL}"
 echo "  Profil        : ${PROFILE}"
+echo "  Region        : ${REGION}"
 echo "══════════════════════════════════════════════════════════════"
 echo ""
 
@@ -75,7 +77,8 @@ fetch_all_events() {
         --end-time "$END_MS" \
         --filter-pattern "$filter_pattern" \
         --output json \
-        --profile "$PROFILE" > "$tmpfile" 2>/dev/null
+        --profile "$PROFILE" \
+        --region "$REGION" > "$tmpfile" 2>/dev/null
 
     jq '.events' "$tmpfile" > "$outfile"
     token=$(jq -r '.nextToken // empty' "$tmpfile")
@@ -91,7 +94,8 @@ fetch_all_events() {
             --filter-pattern "$filter_pattern" \
             --next-token "$token" \
             --output json \
-            --profile "$PROFILE" > "$tmpfile" 2>/dev/null
+            --profile "$PROFILE"  \
+            --region "$REGION" > "$tmpfile" 2>/dev/null
 
         jq -s '.[0] + .[1]' "$outfile" <(jq '.events' "$tmpfile") > "${outfile}.tmp"
         mv "${outfile}.tmp" "$outfile"
@@ -152,9 +156,10 @@ import sys
 import os
 
 profile = sys.argv[1]
-log_group = sys.argv[2]
-streams_file = sys.argv[3]
-output_file = sys.argv[4]
+region = sys.argv[2]
+log_group = sys.argv[3]
+streams_file = sys.argv[4]
+output_file = sys.argv[5]
 
 with open(streams_file) as f:
     entries = json.load(f)
@@ -184,7 +189,8 @@ for idx, (stream_name, timestamps) in enumerate(stream_map.items(), 1):
         "--end-time", str(max_ts),
         "--start-from-head",
         "--output", "json",
-        "--profile", profile
+        "--profile", profile,
+        "--region", region
     ]
 
     try:
@@ -242,7 +248,7 @@ with open(output_file, "w") as f:
 print(f"     ✓ {len(results)} tam yanıt çıkarıldı")
 PYEOF
 
-    python3 "$FULL_SCRIPT" "$PROFILE" "$LOG_GROUP" "$STREAMS_FILE" "$FULL_RESPONSES"
+    python3 "$FULL_SCRIPT" "$PROFILE" "$REGION" "$LOG_GROUP" "$STREAMS_FILE" "$FULL_RESPONSES"
     echo ""
 fi
 
