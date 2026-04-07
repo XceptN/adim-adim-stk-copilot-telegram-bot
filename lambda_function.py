@@ -1479,7 +1479,7 @@ def lambda_handler(event, context):
         if text and text.startswith('/'):
             debug_print(f"[CMD] Unknown command: '{text}'")
             tg_send_message(chat_id,
-                "Geçersiz komut verdiniz. Kullanabileceğiniz geçerli komutlar: /bot, /yeni",
+                f"Merhaba {user_name} ... Geçersiz komut verdin. Kullanabileceğin geçerli komutlar şunlardır: /bot, /yeni",
                 reply_to_message_id=reply_to_id)
             return {'statusCode': 200, 'body': json.dumps({'status': 'ok'})}
 
