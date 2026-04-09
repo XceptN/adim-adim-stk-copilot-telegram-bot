@@ -1096,60 +1096,59 @@ def extract_error_message_from_activity(activity):
 def parse_error_from_text(text):
     """
     Parse error information from the message text itself.
-    
-    Copilot Studio often sends errors as plain text in this format:
-    "Bir hata gerçekleşti.
-    Hata kodu: ContentFiltered
+
+    Copilot Studio / DirectLine sends errors as plain English text:
+    "An error occurred.
+    Error code: ContentFiltered
     Conversation Id: xxx
-    Zaman (UTC): xxx"
-    
+    Time (UTC): xxx"
+
     Returns a dict with parsed error info, or None if not an error message.
     """
     if not text:
         return None
 
-    # Copilot Studio error messages have a very specific structured format:
-    #   "Bir hata gerçekleşti.\nHata Kodu: XXX\nConversation Id: YYY\nZaman (UTC): ZZZ"
+    # Copilot Studio error messages have a specific structured English format.
     # They always contain a "Conversation Id:" line. Normal bot responses that
     # merely *discuss* error codes (e.g. "FZPAYCANCEL hata kodu...") won't have this.
     text_lower = text.lower()
     has_conversation_id_line = "conversation id:" in text_lower
-    has_error_indicator = ("hata kodu:" in text_lower or "error code:" in text_lower
-                           or "hata gerçekleşti" in text_lower or "error occurred" in text_lower)
+    has_error_indicator = ("error code:" in text_lower
+                           or "error occurred" in text_lower)
 
     if not (has_conversation_id_line and has_error_indicator):
         return None
-    
+
     debug_print(f"[PARSE] Detected error message in text, parsing...")
-    
+
     result = {
         "error_code": None,
         "conversation_id": None,
         "timestamp": None
     }
-    
+
     # Parse each line
     lines = text.strip().split('\n')
     for line in lines:
         line = line.strip()
         line_lower = line.lower()
-        
+
         # Parse error code
-        if "hata kodu:" in line_lower or "error code:" in line_lower:
+        if "error code:" in line_lower:
             parts = line.split(':', 1)
             if len(parts) > 1:
                 result["error_code"] = parts[1].strip()
                 debug_print(f"[PARSE] Found error_code: {result['error_code']}")
-        
+
         # Parse conversation ID
         elif "conversation id:" in line_lower:
             parts = line.split(':', 1)
             if len(parts) > 1:
                 result["conversation_id"] = parts[1].strip()
                 debug_print(f"[PARSE] Found conversation_id: {result['conversation_id']}")
-        
+
         # Parse timestamp
-        elif "zaman (utc):" in line_lower or "time (utc):" in line_lower:
+        elif "time (utc):" in line_lower:
             parts = line.split(':', 1)
             if len(parts) > 1:
                 result["timestamp"] = parts[1].strip()
@@ -1205,11 +1204,11 @@ def enrich_error_text(original_text, conversation_id):
     Take the original error text from Copilot and enrich it with
     the detailed error message description.
     
-    Input text format:
-    "Bir hata gerçekleşti.
-    Hata kodu: ContentFiltered
+    Input text format (English from backend):
+    "An error occurred.
+    Error code: ContentFiltered
     Conversation Id: xxx
-    Zaman (UTC): xxx"
+    Time (UTC): xxx"
     
     Output adds the detailed description like Copilot Studio test interface.
     """
