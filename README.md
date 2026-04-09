@@ -7,11 +7,12 @@ A Telegram chatbot for [Adım Adım](https://www.adimadim.org/) NGO that integra
 This bot acts as a bridge between Telegram users and a Microsoft Copilot Studio agent. Users can ask questions via Telegram (text or images) and receive AI-generated responses in Turkish. The bot runs as an AWS Lambda function, making it cost-effective and highly scalable.
 
 **Key capabilities:**
-- Text and image message support
-- Group chat support (responds to @mentions and replies)
+- Text and image message support (unsupported media types are rejected with a friendly message)
+- Group chat support with per-user sessions (responds to @mentions, replies, and commands)
 - Persistent conversation context across messages via DynamoDB
 - Automatic translation of English safety/refusal messages to Turkish
-- Markdown-to-HTML conversion for rich Telegram formatting
+- Markdown-to-HTML conversion for rich Telegram formatting, including table-to-card rendering
+- Comprehensive error detection and Turkish error messages (from channelData, activity text, and PVA errors)
 - Webhook deduplication to handle Telegram retries gracefully
 
 ## Architecture
@@ -62,11 +63,13 @@ AWS Lambda (lambda_function.py)
 ```bash
 aws dynamodb create-table \
   --table-name adim-adim-bot-sessions \
-  --attribute-definitions AttributeName=chat_id,AttributeType=S \
-  --key-schema AttributeName=chat_id,KeyType=HASH \
+  --attribute-definitions AttributeName=session_key,AttributeType=S \
+  --key-schema AttributeName=session_key,KeyType=HASH \
   --billing-mode PAY_PER_REQUEST \
   --time-to-live-specification Enabled=true,AttributeName=ttl
 ```
+
+The `session_key` is the chat ID for private chats, or `chat_id:user_id` for group chats (so each user gets their own conversation context in groups). The same table is also used for webhook deduplication (keys prefixed with `dedup:`).
 
 ### 2. Create the Lambda function
 
@@ -133,7 +136,6 @@ The Lambda execution role needs:
   "Action": [
     "dynamodb:GetItem",
     "dynamodb:PutItem",
-    "dynamodb:UpdateItem",
     "dynamodb:DeleteItem"
   ],
   "Resource": "arn:aws:dynamodb:<region>:<account>:table/<DYNAMODB_SESSION_TABLE>"
@@ -145,14 +147,21 @@ The Lambda execution role needs:
 | Command | Description |
 |---|---|
 | `/bot` | Reset the conversation and show the welcome message |
-| `/yeni` | Alias for `/bot` — start a fresh conversation |
+| `/bot <soru>` | Reset the conversation and immediately ask a question |
+| `/yeni` | Start a fresh conversation (alias for `/bot`) |
+| `/yeni <soru>` | Start a fresh conversation and immediately ask a question |
+
+Both commands also work in image captions (e.g., send a photo with `/bot Bu nedir?` as the caption to start a new conversation with the image). Any other `/` command is rejected with a usage hint.
 
 ## Group Chat Behavior
 
 The bot respects Telegram's **Group Privacy Mode**. When privacy mode is on (default), the bot only responds to:
-- Direct @mentions: `@BotUsername sorum var`
+- Direct @mentions: `@BotUsername sorum var` (the @mention is stripped from the text before processing)
 - Replies to the bot's own messages
-- The `/bot` and `/yeni` commands
+- The `/bot` and `/yeni` commands (with or without `@BotUsername` suffix)
+- @mentions in photo/document captions
+
+In group chats, each user maintains their own independent conversation session (`chat_id:user_id`), and the bot replies to the original message for context.
 
 When privacy mode is off, the bot responds to all messages in the group.
 
