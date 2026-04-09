@@ -1098,22 +1098,17 @@ def parse_error_from_text(text):
     """
     if not text:
         return None
-    
-    # Check if this looks like an error message
-    error_indicators = [
-        "hata gerçekleşti",
-        "hata kodu:",
-        "error occurred",
-        "error code:",
-        "ContentFiltered",
-        "RateLimited",
-        "ServiceUnavailable"
-    ]
-    
+
+    # Copilot Studio error messages have a very specific structured format:
+    #   "Bir hata gerçekleşti.\nHata Kodu: XXX\nConversation Id: YYY\nZaman (UTC): ZZZ"
+    # They always contain a "Conversation Id:" line. Normal bot responses that
+    # merely *discuss* error codes (e.g. "FZPAYCANCEL hata kodu...") won't have this.
     text_lower = text.lower()
-    is_error = any(indicator.lower() in text_lower for indicator in error_indicators)
-    
-    if not is_error:
+    has_conversation_id_line = "conversation id:" in text_lower
+    has_error_indicator = ("hata kodu:" in text_lower or "error code:" in text_lower
+                           or "hata gerçekleşti" in text_lower or "error occurred" in text_lower)
+
+    if not (has_conversation_id_line and has_error_indicator):
         return None
     
     debug_print(f"[PARSE] Detected error message in text, parsing...")
