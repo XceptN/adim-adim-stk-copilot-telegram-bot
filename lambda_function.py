@@ -1123,14 +1123,6 @@ def extract_error_message_from_activity(activity):
             if isinstance(error_data, dict):
                 return error_data.get("code"), error_data.get("message")
     
-    # Check for error in suggestedActions (sometimes errors come with suggestions)
-    suggested_actions = activity.get("suggestedActions", {})
-    if suggested_actions:
-        actions = suggested_actions.get("actions", [])
-        for action in actions:
-            if "error" in str(action).lower():
-                debug_print(f"[DL] Found error indication in suggestedActions: {action}")
-    
     return None, None
 
 
