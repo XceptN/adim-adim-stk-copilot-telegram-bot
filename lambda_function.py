@@ -503,13 +503,15 @@ def markdown_to_telegram_html(text):
     # Tables are converted by _markdown_table_to_cards which handles its own
     # HTML-escaping and link conversion, so the result must be shielded from
     # the generic escaping & markdown passes that follow.
-    _TABLE_MARKER = "\x01TABLE\x01"
-    
+    # _RAW_MARKER flags protected content that must be restored verbatim
+    # (final HTML or raw URLs), as opposed to code blocks that still need escaping.
+    _RAW_MARKER = "\x01RAW\x01"
+
     def protect_table(match):
         html = _markdown_table_to_cards(match.group(0))
         key = f"\x00PROTECTED{counter[0]}\x00"
         counter[0] += 1
-        protected[key] = _TABLE_MARKER + html   # marker so restore knows it's final HTML
+        protected[key] = _RAW_MARKER + html
         return key
     
     result = _MD_TABLE_RE.sub(protect_table, result)
@@ -528,8 +530,17 @@ def markdown_to_telegram_html(text):
     result = re.sub(r'^(\s*)- ', r'\1▸ ', result, flags=re.MULTILINE)
     
     # Links: [text](url) -> <a href="url">text</a>
-    result = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', result)
-    
+    # The URL goes into a placeholder so the bold/italic passes below cannot
+    # match underscores/asterisks inside it and corrupt the href. The link
+    # text stays inline so it still gets bold/italic formatting.
+    def protect_link(match):
+        key = f"\x00PROTECTED{counter[0]}\x00"
+        counter[0] += 1
+        protected[key] = _RAW_MARKER + match.group(2)
+        return f'<a href="{key}">{match.group(1)}</a>'
+
+    result = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', protect_link, result)
+
     # Bold: **text** or __text__  -> <b>text</b>
     result = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', result)
     result = re.sub(r'__(.+?)__', r'<b>\1</b>', result)
@@ -544,9 +555,9 @@ def markdown_to_telegram_html(text):
     
     # Step 4: Restore protected blocks
     for key, original in protected.items():
-        if original.startswith(_TABLE_MARKER):
-            # Already final HTML produced by _markdown_table_to_cards
-            replacement = original[len(_TABLE_MARKER):]
+        if original.startswith(_RAW_MARKER):
+            # Restore verbatim (table HTML or link URL)
+            replacement = original[len(_RAW_MARKER):]
         elif original.startswith('```'):
             code_content = original[3:-3].strip()
             # Escape HTML inside code
