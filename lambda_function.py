@@ -1516,7 +1516,6 @@ def lambda_handler(event, context):
     doc = message.get("document")
     is_image_doc = doc and isinstance(doc, dict) and str(doc.get("mime_type","")).startswith("image/")
     has_image = bool(photo_sizes) or is_image_doc
-    has_text = bool(text)
 
     # Check for unsupported content types
     unsupported_content = (
