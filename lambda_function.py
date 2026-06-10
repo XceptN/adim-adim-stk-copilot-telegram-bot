@@ -1435,6 +1435,10 @@ def lambda_handler(event, context):
     if cleaned_text != original_text and cleaned_text:
         debug_print(f"[GROUP] Using cleaned text: '{cleaned_text}' (original: '{original_text}')")
         message["text"] = cleaned_text
+    # The cleaned text may come from a photo caption: update the caption too,
+    # otherwise the @mention is forwarded to Copilot as part of the instruction
+    if cleaned_text and message.get("caption") and cleaned_text != message.get("caption"):
+        message["caption"] = cleaned_text
     
     # For group chats, we'll reply to the original message for context
     reply_to_id = message_id if is_group_chat(chat) else None
