@@ -1587,8 +1587,10 @@ def lambda_handler(event, context):
             tg_chat_id=chat_id
         )
 
-        # Persist session so the next message continues this conversation
-        session_save(session_key, token, conv_id, watermark=last_watermark)
+        # Persist session so the next message continues this conversation.
+        # If polling never got a watermark (e.g. first GET failed), keep the
+        # previous one — saving "" would replay the whole conversation next time.
+        session_save(session_key, token, conv_id, watermark=last_watermark or watermark)
 
         if not replies:
             error_print(f"Cannot find actual reply from Copilot backend")
