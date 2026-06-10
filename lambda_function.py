@@ -1329,6 +1329,10 @@ def dl_poll_reply_text_and_attachments(token, conversation_id,
                 })
 
         if replies:
+            # Deliberate latency trade-off: return on the first non-empty batch
+            # instead of waiting for possible follow-up messages. If Copilot
+            # sends more activities after this batch, the saved watermark lets
+            # the next invocation pick them up.
             debug_print(f"[DL] poll done replies={len(replies)} in_attempts={attempt}")
             return replies, watermark
 
