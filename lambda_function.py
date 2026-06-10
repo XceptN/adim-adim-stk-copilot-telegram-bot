@@ -1652,8 +1652,9 @@ def lambda_handler(event, context):
                     tg_send_photo_by_url(chat_id, curl, caption=name, reply_to_message_id=reply_to_id)
 
     except Exception as ex:
+        # Log the detail, but never leak internals (URLs, tokens, stack info) to the user
         error_print(f"flow ex={ex}")
-        tg_send_message(chat_id, f"Bir hata oluştu ({ex}). Lütfen tekrar deneyiniz.", reply_to_message_id=reply_to_id)
+        tg_send_message(chat_id, "Bir hata oluştu. Lütfen tekrar deneyiniz.", reply_to_message_id=reply_to_id)
 
     dt = time.time() - t0
     debug_print(f"[DONE] total_ms={int(dt*1000)}")
