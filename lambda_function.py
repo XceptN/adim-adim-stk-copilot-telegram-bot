@@ -113,6 +113,12 @@ def dedup_check_and_lock(update_id):
     Attempt to claim this Telegram update_id so only one Lambda processes it.
     Returns True if we got the lock (first time), False if already seen (retry).
     Uses a conditional PutItem so only one concurrent invocation wins.
+
+    Deliberate trade-off: the lock is claimed BEFORE processing, so if this
+    invocation crashes mid-processing, Telegram's retry of the same update is
+    dropped and that message is lost. Claiming after processing would instead
+    answer every webhook retry with a duplicate reply (the polling loop runs
+    up to ~2 min, well past Telegram's retry window), which is worse here.
     """
     table = _get_session_table()
     if not table:
