@@ -1386,7 +1386,7 @@ def validate_telegram_secret(headers):
 # -------- Lambda Handler --------
 def lambda_handler(event, context):
     t0 = time.time()
-    debug_print(f"[INVOKE] time={datetime.utcnow().isoformat()}Z "
+    debug_print(f"[INVOKE] time={datetime.now(timezone.utc).isoformat()} "
           f"func_url=True method={event.get('requestContext',{}).get('http',{}).get('method')} "
           f"path={event.get('rawPath')} isBase64={event.get('isBase64Encoded')}")
     headers = { (k.lower() if isinstance(k,str) else k): v for k,v in (event.get("headers") or {}).items() }
