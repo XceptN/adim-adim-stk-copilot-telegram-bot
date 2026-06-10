@@ -866,23 +866,24 @@ def dl_get_or_resume_conversation(session_key):
             if new_token:
                 token = new_token
             else:
-                # Token refresh failed – start fresh
+                # Token refresh failed – fall through to create a fresh conversation
+                # (a token from tokens/generate alone has no opened conversation)
                 debug_print("[DL] Token refresh failed, starting new conversation")
-                token, conv_id = dl_get_token_and_conversation_via_secret()
-                return token, conv_id, None, True
+                session = None
 
         # Reconnect to existing conversation (this validates it's still alive)
-        try:
-            headers = {"Authorization": f"Bearer {token}"}
-            reconnect_url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}"
-            body, code, _ = http_get_json(reconnect_url, headers=headers, timeout=15)
-            if code == 200:
-                debug_print(f"[DL] Resumed conversation conv_id={conv_id}")
-                return token, conv_id, watermark, False
-            else:
-                debug_print(f"[DL] Reconnect failed status={code}, starting fresh")
-        except Exception as ex:
-            debug_print(f"[DL] Reconnect error: {ex}, starting fresh")
+        if session:
+            try:
+                headers = {"Authorization": f"Bearer {token}"}
+                reconnect_url = f"{DIRECTLINE_BASE_URL}/v3/directline/conversations/{conv_id}"
+                body, code, _ = http_get_json(reconnect_url, headers=headers, timeout=15)
+                if code == 200:
+                    debug_print(f"[DL] Resumed conversation conv_id={conv_id}")
+                    return token, conv_id, watermark, False
+                else:
+                    debug_print(f"[DL] Reconnect failed status={code}, starting fresh")
+            except Exception as ex:
+                debug_print(f"[DL] Reconnect error: {ex}, starting fresh")
 
     # No valid session – create new
     token, _ = dl_get_token_and_conversation_via_secret()
