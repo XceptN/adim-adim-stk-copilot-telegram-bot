@@ -3,6 +3,7 @@
 
 import base64
 import boto3
+import hmac
 import json
 import mimetypes
 import os
@@ -1378,8 +1379,8 @@ def validate_telegram_secret(headers):
     if not REQUIRE_TG_SECRET:
         debug_print("[SEC] REQUIRE_TG_SECRET=false -> skipping secret header validation")
         return True
-    sent = headers.get("x-telegram-bot-api-secret-token") or headers.get("X-Telegram-Bot-Api-Secret-Token")
-    ok = (TELEGRAM_SECRET_TOKEN and sent == TELEGRAM_SECRET_TOKEN)
+    sent = headers.get("x-telegram-bot-api-secret-token") or headers.get("X-Telegram-Bot-Api-Secret-Token") or ""
+    ok = bool(TELEGRAM_SECRET_TOKEN) and hmac.compare_digest(sent, TELEGRAM_SECRET_TOKEN)
     debug_print(f"[SEC] secret header present={bool(sent)} match={ok}")
     return ok
 
