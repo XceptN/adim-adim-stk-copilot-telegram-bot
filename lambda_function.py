@@ -1358,6 +1358,10 @@ def dl_send_conversation_update(token, conversation_id, user_id):
     debug_print(f"[DL] conversationUpdate status={code}")
     return code in (200, 201)
 
+# Matches /bot or /yeni as a whole command, optionally suffixed with @BotUsername
+# and optionally followed by a query. Word-bounded, so '/botanik' does NOT match.
+_CMD_RE = re.compile(r'^/(bot|yeni)(?:@\w+)?(?:\s+(.*))?$', re.DOTALL)
+
 # -------- Security --------
 def validate_telegram_secret(headers):
     if not REQUIRE_TG_SECRET:
@@ -1438,14 +1442,13 @@ def lambda_handler(event, context):
     # Check messages with images for /bot or /yeni commands in caption
     caption = message.get('caption', '')
 
-    for cmd in ('/bot', '/yeni'):
-        if caption and caption.startswith(cmd):
-            session_delete(session_key)
-            cleaned_caption = caption.removeprefix(cmd).strip() or DEFAULT_PROMPT
-            debug_print(f"[GROUP] Using cleaned caption: '{cleaned_caption}' (original: '{caption}')")
-            message["caption"] = cleaned_caption
-            message["text"] = cleaned_caption
-            break
+    cap_match = _CMD_RE.match(caption) if caption else None
+    if cap_match:
+        session_delete(session_key)
+        cleaned_caption = (cap_match.group(2) or '').strip() or DEFAULT_PROMPT
+        debug_print(f"[GROUP] Using cleaned caption: '{cleaned_caption}' (original: '{caption}')")
+        message["caption"] = cleaned_caption
+        message["text"] = cleaned_caption
 
 
     text = message.get('text', '')
@@ -1467,27 +1470,24 @@ def lambda_handler(event, context):
         '/yeni': f"Pekala {user_name} ...\n\n**Yeni sorunu alabilirim.**",
     }
 
-    for cmd in ('/bot', '/yeni'):
-        if not text or not text.startswith(cmd):
-            continue
-        exact_variants = {cmd, f'{cmd}@{TELEGRAM_BOT_USERNAME}'}
-        if text in exact_variants:
-            session_delete(session_key)
+    cmd_match = _CMD_RE.match(text) if text else None
+    if cmd_match:
+        cmd = f"/{cmd_match.group(1)}"
+        query = (cmd_match.group(2) or '').strip()
+        session_delete(session_key)
+        if not query:
             tg_send_message(chat_id, _CMD_WELCOME[cmd], reply_to_message_id=reply_to_id)
             return {'statusCode': 200, 'body': json.dumps({'status': 'ok'})}
-        # prefix case: /bot <query> or /yeni <query>
-        session_delete(session_key)
-        message['text'] = text.removeprefix(cmd).strip()
-        debug_print(f"[CMD] stripped '{cmd}' prefix: '{message['text']}' (original: '{text}')")
-        break
-    else:
+        # /bot <query> or /yeni <query>: continue with the bare query
+        message['text'] = query
+        debug_print(f"[CMD] stripped '{cmd}' prefix: '{query}' (original: '{text}')")
+    elif text and text.startswith('/'):
         # Unknown command (text starts with / but matched no known command)
-        if text and text.startswith('/'):
-            debug_print(f"[CMD] Unknown command: '{text}'")
-            tg_send_message(chat_id,
-                f"Merhaba {user_name} ... Geçersiz komut verdin. Kullanabileceğin geçerli komutlar şunlardır: /bot, /yeni",
-                reply_to_message_id=reply_to_id)
-            return {'statusCode': 200, 'body': json.dumps({'status': 'ok'})}
+        debug_print(f"[CMD] Unknown command: '{text}'")
+        tg_send_message(chat_id,
+            f"Merhaba {user_name} ... Geçersiz komut verdin. Kullanabileceğin geçerli komutlar şunlardır: /bot, /yeni",
+            reply_to_message_id=reply_to_id)
+        return {'statusCode': 200, 'body': json.dumps({'status': 'ok'})}
 
 
     caption = message.get("caption")
