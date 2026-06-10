@@ -78,10 +78,9 @@ The `session_key` is the chat ID for private chats, or `chat_id:user_id` for gro
 - Memory: 256 MB recommended
 - Timeout: 180 seconds (the polling loop can take up to 120 s)
 
-Package the function with its dependencies:
+The function has no third-party dependencies (it uses only the standard library and boto3, which the Lambda runtime provides), so packaging is just:
 
 ```bash
-pip install -r requirements.txt -t .
 zip -r lambda_package.zip . -x "*.git*" "extract_conversations.sh"
 ```
 
