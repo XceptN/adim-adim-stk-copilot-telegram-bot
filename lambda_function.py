@@ -669,6 +669,17 @@ def tg_download_file(download_url):
     return body, content_type
 
 # -------- Helpers: Group Message Detection --------
+# Telegram entity offsets/lengths are in UTF-16 code units, not Python code
+# points. Any emoji before an entity shifts plain-string slicing, so all
+# entity handling must go through these helpers.
+def _utf16_slice(text, offset, length):
+    data = text.encode("utf-16-le")
+    return data[offset * 2:(offset + length) * 2].decode("utf-16-le", errors="replace")
+
+def _utf16_remove(text, offset, length):
+    data = text.encode("utf-16-le")
+    return (data[:offset * 2] + data[(offset + length) * 2:]).decode("utf-16-le", errors="replace")
+
 def is_group_chat(chat):
     """Check if the chat is a group or supergroup"""
     chat_type = chat.get("type", "")
@@ -706,29 +717,29 @@ def is_bot_mentioned(message, bot_username):
             # Extract the mentioned username from text
             offset = entity.get("offset", 0)
             length = entity.get("length", 0)
-            mentioned = text[offset:offset + length]
+            mentioned = _utf16_slice(text, offset, length)
             debug_print(f"[GROUP] Found mention entity: '{mentioned}'")
-            
+
             # Check if it's our bot (case-insensitive)
             if mentioned.lower() == f"@{bot_username.lower()}":
                 is_mentioned = True
                 mention_positions.append((offset, length))
                 debug_print(f"[GROUP] ✓ Bot @mention detected!")
-        
+
         elif entity.get("type") == "bot_command":
             # Commands like /start@botname also work
             offset = entity.get("offset", 0)
             length = entity.get("length", 0)
-            command = text[offset:offset + length]
+            command = _utf16_slice(text, offset, length)
             if f"@{bot_username.lower()}" in command.lower():
                 is_mentioned = True
                 debug_print(f"[GROUP] ✓ Bot command with @mention detected: {command}")
-    
+
     # Clean the text by removing bot mentions
     cleaned_text = text
     # Sort positions in reverse order to avoid offset issues when removing
     for offset, length in sorted(mention_positions, reverse=True):
-        cleaned_text = cleaned_text[:offset] + cleaned_text[offset + length:]
+        cleaned_text = _utf16_remove(cleaned_text, offset, length)
     
     # Clean up extra whitespace
     cleaned_text = " ".join(cleaned_text.split()).strip()
@@ -798,10 +809,10 @@ def should_respond_in_group(message, chat, bot_username):
             if entity.get("type") == "mention":
                 offset = entity.get("offset", 0)
                 length = entity.get("length", 0)
-                mentioned = caption[offset:offset + length]
+                mentioned = _utf16_slice(caption, offset, length)
                 if mentioned.lower() == f"@{bot_username.lower()}":
                     # Remove mention from caption
-                    cleaned_caption = caption[:offset] + caption[offset + length:]
+                    cleaned_caption = _utf16_remove(caption, offset, length)
                     cleaned_caption = " ".join(cleaned_caption.split()).strip()
                     debug_print(f"[GROUP] ✓ Bot @mentioned in caption")
                     return True, cleaned_caption
