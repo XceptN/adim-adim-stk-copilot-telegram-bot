@@ -33,20 +33,32 @@ for arg in "$@"; do
 done
 set -- "${POSITIONAL[@]+"${POSITIONAL[@]}"}"
 
+# ── Tarih yardımcıları ──
+# GNU `date -d` macOS/BSD'de yok; python3 zaten gereksinim olduğu için onu kullan
+date_to_ms() {
+    python3 -c 'import sys, datetime; dt = datetime.datetime.strptime(sys.argv[1], "%Y-%m-%d %H:%M:%S"); print(int(dt.timestamp()) * 1000)' "$1"
+}
+days_ago_ms() {
+    python3 -c 'import sys, time; print((int(time.time()) - int(sys.argv[1]) * 86400) * 1000)' "$1"
+}
+now_ms() {
+    python3 -c 'import time; print(int(time.time()) * 1000)'
+}
+
 # ── Tarih aralığı ──
 if [[ $# -eq 2 ]]; then
-    START_MS=$(date -d "$1" +%s)000
-    END_MS=$(date -d "$2 23:59:59" +%s)000
+    START_MS=$(date_to_ms "$1 00:00:00")
+    END_MS=$(date_to_ms "$2 23:59:59")
     LABEL="$1 → $2"
 elif [[ $# -eq 1 ]]; then
     DAYS=$1
-    START_MS=$(date -d "${DAYS} days ago" +%s)000
-    END_MS=$(date +%s)000
+    START_MS=$(days_ago_ms "$DAYS")
+    END_MS=$(now_ms)
     LABEL="son ${DAYS} gün"
 else
     DAYS=7
-    START_MS=$(date -d "${DAYS} days ago" +%s)000
-    END_MS=$(date +%s)000
+    START_MS=$(days_ago_ms "$DAYS")
+    END_MS=$(now_ms)
     LABEL="son ${DAYS} gün"
 fi
 
@@ -78,7 +90,7 @@ fetch_all_events() {
         --filter-pattern "$filter_pattern" \
         --output json \
         --profile "$PROFILE" \
-        --region "$REGION" > "$tmpfile" 2>/dev/null
+        --region "$REGION" > "$tmpfile"
 
     jq '.events' "$tmpfile" > "$outfile"
     token=$(jq -r '.nextToken // empty' "$tmpfile")
@@ -95,7 +107,7 @@ fetch_all_events() {
             --next-token "$token" \
             --output json \
             --profile "$PROFILE"  \
-            --region "$REGION" > "$tmpfile" 2>/dev/null
+            --region "$REGION" > "$tmpfile"
 
         jq -s '.[0] + .[1]' "$outfile" <(jq '.events' "$tmpfile") > "${outfile}.tmp"
         mv "${outfile}.tmp" "$outfile"
