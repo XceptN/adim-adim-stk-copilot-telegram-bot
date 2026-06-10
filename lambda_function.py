@@ -615,6 +615,8 @@ def tg_send_message(chat_id, text, reply_to_message_id=None):
             return True
     except urllib.error.HTTPError as e:
         debug_print(f"[TG] sendMessage HTML failed ({e.code}), falling back to plain text")
+    except (urllib.error.URLError, OSError) as e:
+        debug_print(f"[TG] sendMessage HTML failed ({e}), falling back to plain text")
 
     # Fallback: send as plain text (strip all formatting)
     plain_text = strip_markdown(text)
@@ -629,6 +631,9 @@ def tg_send_message(chat_id, text, reply_to_message_id=None):
         return code == 200
     except urllib.error.HTTPError as e:
         error_print(f"[TG] sendMessage plain text also failed: {e.code}")
+        return False
+    except (urllib.error.URLError, OSError) as e:
+        error_print(f"[TG] sendMessage plain text also failed: {e}")
         return False
 
 def tg_send_photo_by_url(chat_id, url_or_fileid, caption=None, reply_to_message_id=None):
