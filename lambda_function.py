@@ -78,8 +78,13 @@ def session_load(session_key):
         return None
 
 
-def session_save(session_key, token, conversation_id, watermark=None):
-    """Save / update a Direct Line session for this Telegram session_key."""
+def session_save(session_key, token, conversation_id, watermark=None, token_expires_at=None):
+    """Save / update a Direct Line session for this Telegram session_key.
+
+    token_expires_at: real expiry of the Direct Line token. Must be carried over
+    from the session/refresh, NOT recomputed on every save — otherwise the expiry
+    keeps sliding forward and the token silently dies mid-conversation.
+    """
     table = _get_session_table()
     if not table:
         return
@@ -91,7 +96,7 @@ def session_save(session_key, token, conversation_id, watermark=None):
             "conversation_id": conversation_id,
             "watermark": watermark or "",
             "expires_at": int(now + DL_CONVERSATION_TTL_SECONDS),
-            "token_expires_at": int(now + DL_TOKEN_TTL_SECONDS),
+            "token_expires_at": int(token_expires_at if token_expires_at else now + DL_TOKEN_TTL_SECONDS),
             "updated_at": int(now),
             # TTL attribute for DynamoDB auto-cleanup (set generously)
             "ttl": int(now + DL_CONVERSATION_TTL_SECONDS + 3600),
@@ -860,7 +865,7 @@ def dl_get_or_resume_conversation(session_key):
     """
     Try to resume an existing Direct Line conversation for this session_key.
     Falls back to creating a new one if no session exists or it's expired.
-    Returns (token, conversation_id, watermark, is_new_conversation).
+    Returns (token, conversation_id, watermark, is_new_conversation, token_expires_at).
     """
     session = session_load(session_key)
 
@@ -876,6 +881,7 @@ def dl_get_or_resume_conversation(session_key):
             new_token = dl_refresh_token(token)
             if new_token:
                 token = new_token
+                token_expires = time.time() + DL_TOKEN_TTL_SECONDS
             else:
                 # Token refresh failed – fall through to create a fresh conversation
                 # (a token from tokens/generate alone has no opened conversation)
@@ -890,7 +896,7 @@ def dl_get_or_resume_conversation(session_key):
                 body, code, _ = http_get_json(reconnect_url, headers=headers, timeout=15)
                 if code == 200:
                     debug_print(f"[DL] Resumed conversation conv_id={conv_id}")
-                    return token, conv_id, watermark, False
+                    return token, conv_id, watermark, False, token_expires
                 else:
                     debug_print(f"[DL] Reconnect failed status={code}, starting fresh")
             except Exception as ex:
@@ -908,7 +914,7 @@ def dl_get_or_resume_conversation(session_key):
         raise RuntimeError(f"Start conversation failed: {c_start} {b_start}")
     conv_id = json.loads(b_start.decode())["conversationId"]
     debug_print(f"[DL] New conversation started conv_id={conv_id}")
-    return token, conv_id, None, True
+    return token, conv_id, None, True, time.time() + DL_TOKEN_TTL_SECONDS
 
 _FORCE_SYSTEM_PROMPT = (
     "Cevap veremediğin veya güvenlik nedeniyle reddettiğin durumlarda bile "
@@ -1544,7 +1550,7 @@ def lambda_handler(event, context):
             debug_print(f"[FLOW] text detected len={len(text)}")
 
     try:
-        token, conv_id, watermark, is_new = dl_get_or_resume_conversation(session_key)
+        token, conv_id, watermark, is_new, token_expires_at = dl_get_or_resume_conversation(session_key)
         debug_print(f"[FLOW] conversation: conv_id={conv_id} is_new={is_new} watermark={watermark}")
 
         if is_new:
@@ -1590,7 +1596,9 @@ def lambda_handler(event, context):
         # Persist session so the next message continues this conversation.
         # If polling never got a watermark (e.g. first GET failed), keep the
         # previous one — saving "" would replay the whole conversation next time.
-        session_save(session_key, token, conv_id, watermark=last_watermark or watermark)
+        session_save(session_key, token, conv_id,
+                     watermark=last_watermark or watermark,
+                     token_expires_at=token_expires_at)
 
         if not replies:
             error_print(f"Cannot find actual reply from Copilot backend")
