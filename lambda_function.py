@@ -259,8 +259,8 @@ def _redact_headers(h):
 def strip_citation_lines(text):
     """Remove lines that contain citation markers like 'Citation-' and citation references in [ ]."""
     cleaned = re.sub(r'^.*Citation-.*$\n?', '', text, flags=re.MULTILINE)
-    # Remove single digit numbers at the end of lines
-    cleaned = re.sub(r'\[\d\]', '', cleaned, flags=re.MULTILINE)
+    # Remove citation reference numbers like [1] or [10]
+    cleaned = re.sub(r'\[\d+\]', '', cleaned, flags=re.MULTILINE)
     return cleaned.strip()
 
 # -------- English Refusal → Turkish Translation --------
